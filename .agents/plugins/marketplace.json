@@ -1,0 +1,21 @@
+{
+  "name": "routecraft",
+  "interface": {
+    "displayName": "RouteCraft"
+  },
+  "plugins": [
+    {
+      "name": "codex-routecraft",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-routecraft"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL",
+        "products": ["CODEX"]
+      },
+      "category": "Productivity"
+    }
+  ]
+}

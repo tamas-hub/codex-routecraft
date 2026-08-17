@@ -1,0 +1,28 @@
+{
+  "name": "codex-routecraft",
+  "version": "0.1.0",
+  "description": "Risk-gated adaptive orchestration for Codex: Sol owns architecture and acceptance while work is selectively routed to the cheapest viable GPT-5.6 lane.",
+  "author": {
+    "name": "tamas-hub",
+    "url": "https://github.com/tamas-hub"
+  },
+  "homepage": "https://github.com/tamas-hub/codex-routecraft#readme",
+  "repository": "https://github.com/tamas-hub/codex-routecraft",
+  "license": "MIT",
+  "keywords": ["codex", "orchestration", "multi-agent", "gpt-5.6", "routing", "cost-optimization"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "RouteCraft for Codex",
+    "shortDescription": "Adaptive Sol-led routing with parent verification and risk-gated review.",
+    "longDescription": "RouteCraft keeps GPT-5.6 Sol as the architect and acceptance owner, defaults to solo execution, and delegates only when a cheaper lane can safely substitute for root implementation. It can route bounded work to Luna, judgment-heavy work to Terra, parallelize independent workstreams, and request a fresh Sol review for high-risk changes. The parent always inspects the complete diff and reruns verification before acceptance.",
+    "developerName": "tamas-hub",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/tamas-hub/codex-routecraft",
+    "defaultPrompt": [
+      "Use $codex-routecraft:orchestration to build this feature with adaptive routing and verification.",
+      "Use RouteCraft to choose the cheapest safe lane, implement this change, and verify the complete diff.",
+      "Use RouteCraft for this task; parallelize only independent work and add fresh Sol review only if risk warrants it."
+    ]
+  }
+}
