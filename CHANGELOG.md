@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 - 2026-08-19
+
+- Made redirected JSON stdin deterministic UTF-8 instead of inheriting a Windows legacy code page.
+- Japanese `learn --input -` and `promote --input -` packets no longer require a process-specific UTF-8 override.
+- Added regression coverage for plain UTF-8 and UTF-8 BOM input while Python starts with a legacy `PYTHONIOENCODING`.
+
 ## 0.3.1 - 2026-08-19
 
 - Prevented GitHub GH007 push rejection when a workstation's inherited global Git email is private.
