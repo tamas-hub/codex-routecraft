@@ -1,7 +1,7 @@
 {
   "name": "codex-routecraft",
-  "version": "0.1.0",
-  "description": "Risk-gated adaptive orchestration for Codex: Sol owns architecture and acceptance while work is selectively routed to the cheapest viable GPT-5.6 lane.",
+  "version": "0.3.0",
+  "description": "Sol-led adaptive Codex orchestration with cheapest-viable delegation, parent verification, and persistent decision memory across sessions and computers.",
   "author": {
     "name": "tamas-hub",
     "url": "https://github.com/tamas-hub"
@@ -9,20 +9,34 @@
   "homepage": "https://github.com/tamas-hub/codex-routecraft#readme",
   "repository": "https://github.com/tamas-hub/codex-routecraft",
   "license": "MIT",
-  "keywords": ["codex", "orchestration", "multi-agent", "gpt-5.6", "routing", "cost-optimization"],
+  "keywords": [
+    "codex",
+    "orchestration",
+    "multi-agent",
+    "gpt-5.6",
+    "routing",
+    "cost-optimization",
+    "persistent-memory",
+    "decision-retrieval",
+    "cross-device"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "RouteCraft for Codex",
-    "shortDescription": "Adaptive Sol-led routing with parent verification and risk-gated review.",
-    "longDescription": "RouteCraft keeps GPT-5.6 Sol as the architect and acceptance owner, defaults to solo execution, and delegates only when a cheaper lane can safely substitute for root implementation. It can route bounded work to Luna, judgment-heavy work to Terra, parallelize independent workstreams, and request a fresh Sol review for high-risk changes. The parent always inspects the complete diff and reruns verification before acceptance.",
+    "shortDescription": "Adaptive Sol-led routing plus persistent decision recall and learning.",
+    "longDescription": "RouteCraft keeps GPT-5.6 Sol as architect and acceptance owner, defaults to solo execution, and delegates only when a cheaper lane can safely substitute for root implementation. It routes bounded work to Luna, judgment-heavy work to Terra, parallelizes independent workstreams, and requests fresh Sol review for high-risk changes. Its Persistent Decision Layer retrieves relevant verified prior decisions, records compact reusable cases, promotes repeated candidates into validated rules, and can synchronize a separate private memory store across computers. The parent always verifies current evidence before acceptance.",
     "developerName": "tamas-hub",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
     "websiteURL": "https://github.com/tamas-hub/codex-routecraft",
     "defaultPrompt": [
-      "Use $codex-routecraft:orchestration to build this feature with adaptive routing and verification.",
-      "Use RouteCraft to choose the cheapest safe lane, implement this change, and verify the complete diff.",
-      "Use RouteCraft for this task; parallelize only independent work and add fresh Sol review only if risk warrants it."
+      "Use $codex-routecraft:orchestration to build this feature with adaptive routing, bounded memory recall, verification, and reusable learning.",
+      "Use RouteCraft to recall relevant prior decisions, choose the cheapest safe lane, implement this change, and verify the complete diff.",
+      "Use RouteCraft for this task; parallelize only independent work, add fresh Sol review only when risk warrants it, and preserve verified reusable decisions.",
+      "Use $codex-routecraft:memory to inspect, validate, recall, or synchronize my private RouteCraft decision store."
     ]
   }
 }

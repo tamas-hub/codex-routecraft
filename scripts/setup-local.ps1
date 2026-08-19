@@ -34,3 +34,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Plugin install failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Agent install failed' }
 
 Write-Host 'RouteCraft local setup complete. Start a fresh Codex task on GPT-5.6 Sol / High.'
+Write-Host 'Persistent learning is disabled until you create a separate private store.'
+Write-Host 'Example: & .\plugins\codex-routecraft\scripts\routecraft-memory.ps1 init --store "$HOME\routecraft-memory" --git-init --configure'

@@ -4,3 +4,5 @@ Thumbs.db
 __pycache__/
 *.pyc
 .env
+plugins/codex-routecraft/intelligence/.routecraft/*
+!plugins/codex-routecraft/intelligence/.routecraft/.gitkeep

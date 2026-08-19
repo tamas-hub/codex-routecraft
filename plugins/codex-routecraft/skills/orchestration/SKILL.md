@@ -1,11 +1,11 @@
 ---
 name: orchestration
-description: "Sol-led adaptive Codex orchestration: default solo, cheapest-viable delegation, bounded parallelism, parent verification, and risk-gated fresh Sol review."
+description: "Sol-led adaptive Codex orchestration with cheapest-viable delegation, bounded parallelism, parent verification, risk-gated fresh Sol review, and persistent decision recall/learning."
 ---
 
 # RouteCraft Orchestration
 
-Act as the root architect and acceptance owner. Preserve the user's intent, choose the architecture, decide whether delegation is worthwhile, assign exact ownership, verify the accumulated change set, and accept or reject the result.
+Act as the root architect and acceptance owner. Preserve the user's intent, choose the architecture, retrieve relevant prior decisions, decide whether delegation is worthwhile, assign exact ownership, verify the accumulated change set, and accept or reject the result.
 
 Read these references before the first delegation:
 
@@ -13,6 +13,7 @@ Read these references before the first delegation:
 - `references/role-contracts.md` for worker and reviewer packets.
 - `references/compatibility.md` for capability-dependent spawning.
 - `references/operations.md` for installation and runtime checks.
+- `references/persistent-decision-layer.md` for bounded recall, learning, promotion, and cross-device synchronization.
 
 ## Root contract
 
@@ -23,11 +24,21 @@ The root owns:
 - requirement resolution and material ambiguity;
 - architecture, interfaces, and decomposition;
 - route and lane selection;
+- persistent-decision retrieval and applicability checks;
 - child ownership boundaries;
 - complete diff inspection;
 - rerunning requested verification;
 - escalation and review decisions;
-- final acceptance.
+- final acceptance;
+- post-task extraction of reusable decision knowledge.
+
+## Recall before rediscovering
+
+Before substantial investigation or implementation, follow `references/persistent-decision-layer.md` and use the bundled `scripts/routecraft_memory.py` CLI when available.
+
+Run a bounded recall using the task symptom, subsystem, technologies, and verification target. Load only relevant returned excerpts. Do not load the complete memory store by default.
+
+Retrieved memory is prior evidence, not truth. Current repository evidence, current authoritative documentation, and reproducible tests take precedence. Preserve recalled record IDs for the completion report when they materially affect the route or solution.
 
 ## Declare the route before task tools
 
@@ -103,18 +114,21 @@ Every implementation child receives the exact packet from `references/role-contr
 
 Children must preserve concurrent edits, avoid unrelated files, and surface ambiguity instead of widening scope.
 
+Relevant recalled rules/cases may be included in a worker packet only when they apply directly to that worker's bounded scope. Do not forward the entire recall result automatically.
+
 ## Parent verification is mandatory
 
-Treat every worker report as a claim. In the root session:
+Treat every worker report and every retrieved memory record as a claim. In the root session:
 
 1. inspect the complete working-tree diff or exact base/head comparison;
 2. confirm changed files match ownership;
 3. rerun the requested tests/checks;
 4. inspect generated artifacts or runtime evidence when relevant;
 5. resolve integration conflicts explicitly;
-6. decide whether new risk requires escalation or fresh review.
+6. decide whether new risk requires escalation or fresh review;
+7. confirm that any recalled rule actually matched the current evidence.
 
-A child saying "done" is never sufficient evidence.
+A child saying "done" and a memory record saying "validated" are never sufficient evidence by themselves.
 
 ## Risk-gated fresh Sol review
 
@@ -133,6 +147,16 @@ The reviewer returns exactly one verdict: `ship`, `fix-first`, or `rethink`.
 
 Any implementation change after a review invalidates that verdict. Re-verify and obtain a fresh review when the route still requires one.
 
+## Learn after verified meaningful work
+
+After verification, follow `references/persistent-decision-layer.md`.
+
+When the task produced reusable decision value, create a compact learning packet and invoke `scripts/routecraft_memory.py learn`. Store verified facts as a case. Store a plausible but not yet repeated pattern as a candidate. Reinforce an existing candidate only when the current task supplies independent evidence.
+
+Do not store secrets, personal data, raw transcripts, full logs, copied source code, or generic documentation. Do not write personal memory into the bundled public plugin store.
+
+When a candidate becomes eligible for promotion, inspect the evidence and promote only a bounded rule that survives counterexamples. Never invoke the exceptional `--authoritative --human-approved` path without explicit human approval.
+
 ## Completion report
 
 End with:
@@ -141,5 +165,8 @@ End with:
 - files changed;
 - exact verification performed and outcome;
 - reviewer verdict when used;
+- persistent rule/case IDs that materially influenced the work;
+- new case/candidate/rule IDs captured or updated;
+- memory synchronization outcome when attempted;
 - residual risk or compatibility limitations;
 - whether the intended child model/effort was verified or only requested.

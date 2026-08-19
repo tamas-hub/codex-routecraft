@@ -1,21 +1,14 @@
 # Publishing to GitHub
 
-The intended public repository is:
+The public plugin repository is:
 
 `tamas-hub/codex-routecraft`
 
-## One-time repository creation
+## Public/private boundary
 
-Create a new **public** GitHub repository named `codex-routecraft` under `tamas-hub`.
+Publish plugin code, bundled empty templates, tests, and documentation here. Do **not** publish personal decision records from an external RouteCraft memory store.
 
-Recommended options:
-
-- Visibility: Public
-- Initialize with README: No
-- Add .gitignore: No
-- License: No
-
-The local tree already contains those files, so the remote should start empty.
+Personal `cases/`, `candidates/`, and `rules/` belong in a separate private repository.
 
 ## Publish this checkout
 
@@ -33,22 +26,29 @@ If `origin` already exists, inspect it before changing it:
 git remote -v
 ```
 
-## After publishing
+## Pre-publish verification
 
-Verify the public installation path:
+```sh
+python scripts/verify.py
+python -m unittest discover -s tests -v
+```
+
+Check that the bundled decision store contains only its sentinel, templates, empty record directories, and explanatory index.
+
+## After publishing
 
 ```sh
 codex plugin marketplace add tamas-hub/codex-routecraft --ref main
 codex plugin add codex-routecraft@routecraft
 ```
 
-Then install the companion RouteCraft agents as described in `docs/INSTALL.md`.
+Install companion agents and create a separate private memory store as described in `docs/INSTALL.md`.
 
 ## Suggested GitHub metadata
 
 Description:
 
-> Sol-led adaptive orchestration for Codex: cheapest-viable GPT-5.6 routing, bounded parallelism, parent verification, and risk-gated fresh Sol review.
+> Sol-led adaptive Codex orchestration with cheapest-viable GPT-5.6 routing, parent verification, and persistent decision memory across sessions and computers.
 
 Suggested topics:
 
@@ -60,4 +60,5 @@ Suggested topics:
 - ai-agents
 - developer-tools
 - cost-optimization
-- coding-agent
+- persistent-memory
+- decision-retrieval

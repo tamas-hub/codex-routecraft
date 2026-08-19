@@ -1,0 +1,27 @@
+{
+  "kind": "case",
+  "title": "Progress reset after app restart",
+  "tags": ["expo", "ios", "persistence"],
+  "scope": ["react-native"],
+  "repository": "owner/repository",
+  "outcome": "fixed",
+  "sections": {
+    "Problem": "Progress disappeared after process restart.",
+    "Root cause": "State was written to a volatile cache.",
+    "Failed approaches": "The investigation initially focused on the OS update.",
+    "Fix": "Moved state to the durable storage adapter.",
+    "Verification": "Restarted twice and reran the persistence regression test.",
+    "Reusable lesson": "Verify the persistence boundary before blaming the runtime."
+  },
+  "candidate": {
+    "title": "Verify storage durability before broad runtime diagnosis",
+    "tags": ["debugging", "persistence"],
+    "scope": ["mobile"],
+    "sections": {
+      "Observation": "Volatile storage can mimic an OS regression.",
+      "Possible decision value": "Inspect the storage adapter early.",
+      "Counterexamples / uncertainty": "Migration and serialization failures can produce similar symptoms.",
+      "Promotion condition": "Confirm in another independent repository."
+    }
+  }
+}
