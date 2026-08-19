@@ -9,7 +9,11 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,10 +26,24 @@ jobs:
       - name: Verify RouteCraft contracts
         run: python scripts/verify.py
 
+      - name: Test persistent decision memory
+        run: python -m unittest discover -s tests -v
+
       - name: Check shell syntax
+        if: runner.os == 'Linux'
         run: |
           sh -n plugins/codex-routecraft/scripts/install-agents.sh
+          sh -n plugins/codex-routecraft/scripts/routecraft-memory.sh
           sh -n scripts/setup-local.sh
 
+      - name: Check PowerShell syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          [scriptblock]::Create((Get-Content plugins/codex-routecraft/scripts/install-agents.ps1 -Raw)) | Out-Null
+          [scriptblock]::Create((Get-Content plugins/codex-routecraft/scripts/routecraft-memory.ps1 -Raw)) | Out-Null
+          [scriptblock]::Create((Get-Content scripts/setup-local.ps1 -Raw)) | Out-Null
+
       - name: Check whitespace
+        if: runner.os == 'Linux'
         run: git diff --check

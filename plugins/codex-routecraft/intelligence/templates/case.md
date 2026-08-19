@@ -1,15 +1,23 @@
 ---
-id: CASE-YYYYMMDD-NNN
-title: Short case title
-status: closed
+schema_version: 1
+id: "CASE-YYYYMMDDTHHMMSSZ-DEVICE-ABCD"
+kind: "case"
+title: "Short case title"
+status: "closed"
+confidence: 0.65
+observations: 1
 tags: []
-date: YYYY-MM-DD
-repository: owner/name
-outcome: fixed
+scope: []
+created_at: "YYYY-MM-DDTHH:MM:SSZ"
+updated_at: "YYYY-MM-DDTHH:MM:SSZ"
+device_id: "device"
+repository: "owner/name"
+outcome: "fixed"
+evidence: []
 related_rules: []
 ---
 
-# Case
+# Case: Short case title
 
 ## Problem
 
@@ -17,15 +25,15 @@ Describe the user-visible or engineering problem.
 
 ## Root cause
 
-State the verified root cause. If not verified, say so.
+State the verified root cause. If it is not verified, say so.
 
 ## Investigation path
 
-Record only the decision-relevant path: key hypotheses, decisive evidence, and important eliminated causes.
+Record only the decision-relevant path: decisive evidence, important hypotheses, and eliminated causes.
 
 ## Failed approaches
 
-Record failed or misleading approaches when they are likely to prevent repeated waste.
+Record failed or misleading approaches only when they are likely to prevent repeated waste.
 
 ## Fix
 
@@ -37,8 +45,4 @@ List the exact checks that established the outcome.
 
 ## Reusable lesson
 
-What should a future agent retrieve from this case?
-
-## Promotion candidate
-
-If this suggests a general rule, link to a candidate entry rather than promoting it automatically.
+State what a future agent should retrieve from this case.

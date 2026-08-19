@@ -1,17 +1,22 @@
 ---
-id: RULE-NNN
-title: Short rule title
-status: validated
-confidence: 0.80
+schema_version: 1
+id: "RULE-YYYYMMDDTHHMMSSZ-DEVICE-ABCD"
+kind: "rule"
+title: "Short rule title"
+status: "validated"
+confidence: 0.8
 observations: 2
 tags: []
-first_observed: YYYY-MM-DD
-last_verified: YYYY-MM-DD
 scope: []
+created_at: "YYYY-MM-DDTHH:MM:SSZ"
+updated_at: "YYYY-MM-DDTHH:MM:SSZ"
+last_verified: "YYYY-MM-DDTHH:MM:SSZ"
+device_id: "device"
 evidence: []
+source_candidate: "CAND-..."
 ---
 
-# Rule
+# Rule: Short rule title
 
 ## Decision
 
@@ -31,8 +36,8 @@ Explain why the rule changes future decisions.
 
 ## Verification
 
-Describe the minimum check that should accompany application of the rule.
+Describe the minimum check that must accompany application of the rule.
 
 ## Evidence
 
-Reference the independent cases, PRs, issues, tests, or authoritative sources that support the rule.
+Reference independent cases, PRs, issues, tests, or authoritative sources.

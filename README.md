@@ -1,41 +1,57 @@
 # RouteCraft for Codex
 
-**Sol-led adaptive routing for Codex: default to solo, delegate only when it pays, parallelize only independent work, and always verify in the parent.**
+**Sol-led adaptive routing plus persistent decision memory for Codex. Default to solo, delegate only when it pays, parallelize only independent work, verify in the parent, and let future sessions reuse validated decisions.**
 
 RouteCraft is a Codex plugin/skill for software-delivery orchestration across the GPT-5.6 family. The primary Sol session owns architecture and acceptance. Bounded implementation can move to Luna, judgment-heavy implementation can move to Terra, and high-risk changes can receive a fresh Sol review.
 
-The goal is not "use more agents." The goal is **use the cheapest credible lane without duplicating expensive work**.
+V0.3.0 adds a Persistent Decision Layer:
 
-> Status: v0.1.0 initial public-ready scaffold. Codex multi-agent APIs are evolving; RouteCraft is deliberately capability-aware and fails conservatively when a requested model/effort lane cannot be selected or verified.
+- retrieve relevant prior rules and cases before repeating investigation;
+- store verified cases and provisional candidates after meaningful work;
+- promote only repeatedly observed candidates into validated rules;
+- synchronize a separate private memory repository across computers.
+
+The goal is not "use more agents" or "store more text." The goal is **use the cheapest credible lane and avoid paying the same search/reasoning cost twice**.
+
+> Status: v0.3.0. Codex multi-agent APIs are evolving; RouteCraft is capability-aware and fails conservatively when a requested model/effort lane cannot be selected or verified.
 
 ## Architecture
 
 ```text
+                          Private Decision Store
+                    Rules / Cases / Candidates / Evidence
+                                   |
+                           bounded recall only
+                                   |
                            GPT-5.6 Sol / High
                          Architect + Acceptance
-                                  |
-                           ROUTECRAFT PLAN
-                                  |
-              +-------------------+-------------------+
-              |                   |                   |
-            SOLO              DELEGATE            PARALLEL
-              |                   |                   |
-           root Sol        cheapest viable       2-3 independent
-                              worker lane           workstreams
-                                  |
-                 +----------------+----------------+
-                 |                                 |
-              Luna                             Terra
-        low / medium / max                medium / high
-                 |                                 |
-                 +----------------+----------------+
-                                  |
-                         Parent Sol verifies
-                     complete diff + tests + scope
-                                  |
-                         high-risk changes only
-                                  |
-                       Fresh Sol / High review
+                                   |
+                            ROUTECRAFT PLAN
+                                   |
+              +--------------------+--------------------+
+              |                    |                    |
+            SOLO               DELEGATE             PARALLEL
+              |                    |                    |
+           root Sol         cheapest viable        2-3 independent
+                               worker lane            workstreams
+                                   |
+                  +----------------+----------------+
+                  |                                 |
+               Luna                             Terra
+         low / medium / max                medium / high
+                  |                                 |
+                  +----------------+----------------+
+                                   |
+                          Parent Sol verifies
+                      complete diff + tests + scope
+                                   |
+                          high-risk changes only
+                                   |
+                        Fresh Sol / High review
+                                   |
+                          verified learning packet
+                                   |
+                       Case -> Candidate -> Rule
 ```
 
 ## Design principles
@@ -44,9 +60,12 @@ The goal is not "use more agents." The goal is **use the cheapest credible lane 
 2. **Cheapest viable lane.** Luna for bounded work; Terra when judgment/context increases; Sol owns architecture and acceptance.
 3. **No duplicate implementation.** A delegated worker substitutes for root implementation; the root verifies rather than redoing it.
 4. **Bounded parallelism.** At most three independent workstreams, with explicit file ownership and frozen interfaces.
-5. **Parent verification.** Worker reports are claims; the root inspects the actual diff and reruns checks.
+5. **Parent verification.** Worker reports and memory records are claims; the root inspects current evidence and reruns checks.
 6. **Risk-gated review.** Fresh Sol review is extra quality spend, not a default tax.
-7. **Capability-aware runtime.** RouteCraft uses direct model/effort overrides when exposed, named custom agents when available, and falls back to solo rather than pretending a cheaper lane was used.
+7. **Capability-aware runtime.** RouteCraft falls back to solo rather than pretending a cheaper model lane was used.
+8. **Recall before rediscovery.** Retrieve only the smallest relevant prior decision surface.
+9. **Evidence-gated learning.** One successful fix stays a case/candidate until independent evidence supports a rule.
+10. **Private cross-device store.** Personal decision memory is isolated from public source repositories.
 
 ## Lane guide
 
@@ -60,13 +79,9 @@ The goal is not "use more agents." The goal is **use the cheapest credible lane 
 | `terra-high` | broad/high-risk integration under settled architecture |
 | `fresh-sol-high` | independent review of consequential changes |
 
-OpenAI's current model guidance positions Sol for frontier capability, Terra for intelligence/cost balance, and Luna for efficient high-volume workloads. RouteCraft applies that hierarchy to Codex delivery while treating reasoning effort as a separate quality/cost control.
-
 ## Install
 
 ### From GitHub
-
-After the repository is published:
 
 ```sh
 codex plugin marketplace add tamas-hub/codex-routecraft --ref main
@@ -94,8 +109,6 @@ Start a fresh Codex task after installation.
 
 ### Local checkout
 
-For the quickest self-install from this checkout:
-
 macOS / Linux:
 
 ```sh
@@ -108,37 +121,55 @@ Windows PowerShell:
 & .\scripts\setup-local.ps1
 ```
 
-Or run the individual commands manually:
+## Configure a private decision store
+
+The bundled store is a public read-only seed. RouteCraft refuses to write personal memory into it by default.
+
+One computer:
 
 ```sh
-git clone https://github.com/tamas-hub/codex-routecraft.git
-cd codex-routecraft
-codex plugin marketplace add "$(pwd)"
-codex plugin add codex-routecraft@routecraft
-sh plugins/codex-routecraft/scripts/install-agents.sh
-python scripts/verify.py
+python plugins/codex-routecraft/scripts/routecraft_memory.py init \
+  --store ~/routecraft-memory \
+  --git-init \
+  --configure
 ```
 
-Windows PowerShell:
+For multiple computers, create an empty **private GitHub repository** first.
 
-```powershell
-git clone https://github.com/tamas-hub/codex-routecraft.git
-Set-Location codex-routecraft
-codex plugin marketplace add (Get-Location).Path
-codex plugin add codex-routecraft@routecraft
-& .\plugins\codex-routecraft\scripts\install-agents.ps1
-python .\scripts\verify.py
+First computer:
+
+```sh
+python plugins/codex-routecraft/scripts/routecraft_memory.py init \
+  --store ~/routecraft-memory \
+  --git-init \
+  --remote git@github.com:OWNER/PRIVATE-MEMORY-REPO.git \
+  --configure \
+  --auto-sync both
+
+python plugins/codex-routecraft/scripts/routecraft_memory.py sync
 ```
 
-## Use
+Additional computers:
+
+```sh
+python plugins/codex-routecraft/scripts/routecraft_memory.py init \
+  --store ~/routecraft-memory \
+  --clone git@github.com:OWNER/PRIVATE-MEMORY-REPO.git \
+  --configure \
+  --auto-sync both
+```
+
+See [Persistent Decision Layer](docs/PERSISTENT_DECISION_LAYER.md) and the [Japanese guide](docs/PERSISTENT_DECISION_LAYER.ja.md).
+
+## Use RouteCraft
 
 Run the primary task on **GPT-5.6 Sol / High** and use:
 
 ```text
-Use $codex-routecraft:orchestration to build this feature. Declare the RouteCraft plan before task tools, choose the cheapest safe lane, parallelize only independent work, verify the complete diff, and add fresh Sol review only when risk warrants it.
+Use $codex-routecraft:orchestration to build this feature. Recall relevant prior decisions, declare the RouteCraft plan before task tools, choose the cheapest safe lane, parallelize only independent work, verify the complete diff, and capture reusable verified learning.
 ```
 
-RouteCraft emits a declaration before work:
+RouteCraft emits:
 
 ```text
 ROUTECRAFT PLAN
@@ -150,9 +181,52 @@ risk: low | medium | high | critical
 reason: ...
 ```
 
+For store administration, Codex can also use:
+
+```text
+Use $codex-routecraft:memory to inspect, validate, recall, or synchronize my private RouteCraft decision store.
+```
+
+## Memory CLI
+
+```sh
+# Retrieve a bounded relevant decision surface
+python plugins/codex-routecraft/scripts/routecraft_memory.py recall \
+  --query "state disappears after restart" \
+  --limit 5 \
+  --budget 12000
+
+# Store a verified case/candidate packet
+python plugins/codex-routecraft/scripts/routecraft_memory.py learn \
+  --input docs/examples/case-packet.json
+
+# Promote a repeatedly observed candidate
+python plugins/codex-routecraft/scripts/routecraft_memory.py promote \
+  --input docs/examples/promotion-packet.json
+
+# Inspect and validate
+python plugins/codex-routecraft/scripts/routecraft_memory.py status --json
+python plugins/codex-routecraft/scripts/routecraft_memory.py validate
+```
+
+The local search index may contain the complete searchable text, but it stays outside model context. Recall returns only a few decision-relevant excerpts under the requested budget.
+
+## Learning lifecycle
+
+```text
+verified task
+   -> Case
+   -> possible recurring pattern (Candidate)
+   -> second independent case reinforces Candidate
+   -> promotion gate passes
+   -> Validated Rule
+```
+
+Normal promotion requires at least two observations backed by two captured Case records. The exceptional authoritative path also requires explicit human approval and must not be used autonomously.
+
 ## What happens when Codex cannot route models
 
-Codex multi-agent tool schemas have changed across builds and surfaces. RouteCraft does not silently claim cross-model routing.
+Codex multi-agent tool schemas vary across builds and surfaces. RouteCraft does not silently claim cross-model routing.
 
 - If spawn-time `model` + `reasoning_effort` are exposed, RouteCraft uses them directly.
 - Otherwise, if named `agent_type` is exposed, RouteCraft uses installed namespaced custom agents.
@@ -160,21 +234,26 @@ Codex multi-agent tool schemas have changed across builds and surfaces. RouteCra
 
 See [Compatibility](plugins/codex-routecraft/skills/orchestration/references/compatibility.md).
 
-## Cost expectations
+## Cost and cache expectations
 
-RouteCraft does **not** promise a fixed savings percentage. Real savings depend on the share of implementation that can move from Sol to Luna/Terra, context size, reasoning effort, retries, parent verification, and review frequency.
+RouteCraft does **not** promise a fixed savings percentage or a specific prompt-cache hit rate. Real usage depends on task shape, context stability, retries, model routing, parent verification, and platform quota accounting.
 
-The intended savings mechanism is simple:
+The intended mechanisms are:
 
-- keep architecture and acceptance in Sol;
-- move only bounded implementation to cheaper lanes;
-- avoid repeating the same implementation in the parent;
-- avoid fresh review unless risk justifies the additional spend;
-- avoid spawning agents for tasks too small to amortize orchestration overhead.
+- move bounded implementation away from Sol only when credible;
+- avoid duplicate parent/child implementation;
+- retrieve prior decisions instead of repeating the same investigation;
+- preserve failed paths and verification recipes;
+- keep the always-loaded surface small;
+- synchronize reusable knowledge rather than raw transcripts.
+
+Measure cache reuse, elapsed time, tool calls, rejected hypotheses, rework, and outcome quality separately.
 
 ## Safety
 
-RouteCraft is a workflow policy, not a security boundary. Repository sandboxing, tool permissions, approvals, secrets handling, and source-system permissions still come from Codex and your environment. A reviewer requesting read-only behavior is not equivalent to enforced read-only isolation unless the runtime reports that isolation.
+RouteCraft is a workflow policy, not a security boundary. Repository sandboxing, tool permissions, approvals, secrets handling, and source-system permissions still come from Codex and your environment.
+
+The memory CLI rejects common token/private-key patterns and oversized record bodies, stages only direct Markdown records/templates in known memory paths, rejects Git remote-helper syntax and symlinks, and refuses to sync a store that is merely a subdirectory of an application repository. These are safeguards, not complete data-loss prevention.
 
 See [SECURITY.md](SECURITY.md).
 
@@ -185,20 +264,29 @@ See [SECURITY.md](SECURITY.md).
 plugins/codex-routecraft/
   .codex-plugin/plugin.json
   agents/
+  intelligence/
+    cases/
+    candidates/
+    rules/
+    templates/
   scripts/
+    routecraft_memory.py
+    routecraft-memory.sh
+    routecraft-memory.ps1
   skills/orchestration/
     SKILL.md
     references/
+docs/
+  PERSISTENT_DECISION_LAYER.md
+  PERSISTENT_DECISION_LAYER.ja.md
+tests/
+  test_routecraft_memory.py
 scripts/verify.py
 ```
 
-## Compatibility notes
-
-The public Codex runtime and documentation are evolving. In particular, custom-agent registration and the model-visible spawn schema can vary by surface/version. RouteCraft intentionally separates routing policy from spawn mechanics so it can support both direct overrides and pinned custom roles.
-
 ## Acknowledgements
 
-RouteCraft's safety model is independently implemented but is influenced by the broader Codex community's work on selective multi-agent routing, including [DannyMac180/sol-advisor](https://github.com/DannyMac180/sol-advisor). OpenAI's Codex plugin-creator examples and open-source Codex implementation are the primary references for package structure and runtime capability checks.
+RouteCraft's safety model is independently implemented but is influenced by the broader Codex community's work on selective multi-agent routing, including DannyMac180/sol-advisor. OpenAI's Codex plugin-creator examples and open-source Codex implementation are the primary references for package structure and runtime capability checks.
 
 ## License
 

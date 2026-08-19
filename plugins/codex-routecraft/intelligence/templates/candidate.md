@@ -1,15 +1,20 @@
 ---
-id: CAND-YYYYMMDD-NNN
-title: Short candidate title
-status: candidate
-confidence: 0.50
+schema_version: 1
+id: "CAND-YYYYMMDDTHHMMSSZ-DEVICE-ABCD"
+kind: "candidate"
+title: "Short candidate title"
+status: "candidate"
+confidence: 0.5
 observations: 1
 tags: []
-first_observed: YYYY-MM-DD
-last_observed: YYYY-MM-DD
+scope: []
+created_at: "YYYY-MM-DDTHH:MM:SSZ"
+updated_at: "YYYY-MM-DDTHH:MM:SSZ"
+device_id: "device"
+evidence: []
 ---
 
-# Candidate
+# Candidate: Short candidate title
 
 ## Observation
 
@@ -23,14 +28,10 @@ Where and under what conditions did it happen?
 
 How could this change a future decision?
 
-## Evidence
-
-Link or reference to the supporting case, issue, PR, test, log excerpt, or official documentation.
-
 ## Counterexamples / uncertainty
 
 What might make this pattern false or overly broad?
 
 ## Promotion condition
 
-What independent observation or evidence would justify promotion to a validated rule?
+What independent observation or authoritative evidence would justify promotion to a validated rule?

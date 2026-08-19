@@ -17,3 +17,5 @@ codex plugin add codex-routecraft@routecraft
 sh plugins/codex-routecraft/scripts/install-agents.sh
 
 echo "RouteCraft local setup complete. Start a fresh Codex task on GPT-5.6 Sol / High."
+echo "Persistent learning is disabled until you create a separate private store."
+echo "Example: python3 plugins/codex-routecraft/scripts/routecraft_memory.py init --store \"$HOME/routecraft-memory\" --git-init --configure"

@@ -1,51 +1,60 @@
 # RouteCraft Persistent Decision Layer
 
-This directory defines the portable, reusable decision-memory layer used by RouteCraft.
+This directory contains the bundled seed store and record templates for RouteCraft's persistent decision memory.
 
-The goal is not to stuff more text into every prompt. The goal is to let a new Codex session start from validated prior decisions when they are relevant.
+The objective is not to load more text into every prompt. The objective is to let a new Codex session retrieve a small, relevant set of validated prior decisions before it repeats expensive discovery work.
 
-## Design principles
-
-1. Keep the always-loaded surface small.
-2. Retrieve only task-relevant memory.
-3. Separate observations from validated rules.
-4. Preserve evidence and provenance.
-5. Promote repeated patterns; do not turn one-off anecdotes into global rules.
-6. Prefer decisions, failure modes, and verification recipes over raw logs.
-7. Never store secrets, credentials, personal data, or proprietary content that does not belong in the repository.
-
-## Memory classes
-
-- `candidates/` — unverified observations and possible patterns.
-- `rules/` — validated reusable decision rules.
-- `cases/` — compact records of completed investigations and fixes.
-- `templates/` — canonical formats for new entries.
-- `INDEX.md` — compact retrieval map. Keep this much smaller than the full store.
-
-## Promotion lifecycle
+## Lifecycle
 
 ```text
-observation
-  -> candidate
-  -> repeated independent observation
-  -> validated rule
-  -> optionally promoted into always-on orchestration guidance
+verified work
+  -> reusable case
+  -> possible recurring pattern (candidate)
+  -> independent confirmation
+  -> validated decision rule
 ```
 
-A rule should normally require at least two independent cases, or one exceptionally strong case with direct authoritative evidence and explicit human acceptance.
+A one-off success is not automatically a global rule. Candidates normally need at least two observations backed by two captured Case records before promotion. An exceptional authoritative path also requires explicit human approval.
 
-## What belongs here
+## Store classes
 
-Good memory changes a future decision. Examples:
+- `cases/` — compact records of completed investigations and fixes.
+- `candidates/` — plausible but not yet validated patterns.
+- `rules/` — validated reusable decision rules.
+- `templates/` — human-readable record examples.
+- `.routecraft/` — generated local index and lock files.
 
-- a root-cause signature that reliably narrows debugging;
-- a failed repair strategy and the conditions under which it fails;
-- a verification sequence that catches a recurring regression;
-- a repository pattern that changes routing or review strength;
-- an integration constraint that repeatedly matters across projects.
+## Retrieval model
 
-Raw transcripts, full tool logs, generic documentation, marketing copy, and duplicated source code do not belong here.
+The CLI builds a local programmatic index and returns only the highest-scoring rules/cases under a character budget. The complete store is not injected into the model context.
 
-## Retrieval budget
+```sh
+python scripts/routecraft_memory.py recall --query "state disappears after restart"
+```
 
-RouteCraft should read `INDEX.md` first, then load only the smallest set of relevant rules/cases. Avoid loading the entire store into context.
+## Private external store required for learning
+
+The bundled store is a public, read-only seed. RouteCraft refuses to write personal decision memory into it by default.
+
+Create a dedicated private store:
+
+```sh
+python scripts/routecraft_memory.py init \
+  --store ~/routecraft-memory \
+  --git-init \
+  --configure
+```
+
+For multiple computers, use a separate **private Git repository** as described in `docs/PERSISTENT_DECISION_LAYER.md`.
+
+## Memory hygiene
+
+Store only material that can change a future decision. Do not store:
+
+- credentials, tokens, private keys, passwords, or personal data;
+- full transcripts, raw logs, or complete tool histories;
+- copied source code merely for archival purposes;
+- generic documentation that is cheaper to retrieve from its authoritative source;
+- duplicated or contradicted rules.
+
+Current repository evidence, authoritative documentation, and reproducible tests always override remembered heuristics.

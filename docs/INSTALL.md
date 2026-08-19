@@ -1,21 +1,21 @@
-# Installation guide
+# Installation
 
-## Recommended setup
+## Requirements
 
-Use GPT-5.6 Sol / High for the primary Codex session. RouteCraft itself does not overwrite your global Codex model settings.
+- Git
+- Python 3.11+
+- Codex CLI or desktop build with plugin support
+- GPT-5.6 Sol for the primary session
+- Luna/Terra access only when cross-model delegation is desired
 
-### 1. Install the marketplace and plugin
-
-When published on GitHub:
+## Install from GitHub
 
 ```sh
 codex plugin marketplace add tamas-hub/codex-routecraft --ref main
 codex plugin add codex-routecraft@routecraft
 ```
 
-### 2. Install companion custom agents
-
-Plugins may not automatically register custom agent TOMLs on all Codex builds, so RouteCraft ships a separate safe installer.
+Install bundled custom-agent profiles.
 
 macOS / Linux:
 
@@ -32,55 +32,62 @@ $pluginDir = ($plugins.installed | Where-Object { $_.pluginId -eq 'codex-routecr
 & "$pluginDir/scripts/install-agents.ps1"
 ```
 
-### 3. Restart the task
+Start a fresh Codex task after installation.
 
-Start a fresh Codex task so the new agent profiles are discovered.
+## Install from a local checkout
 
-### 4. Verify
-
-From a cloned repository:
+macOS / Linux:
 
 ```sh
-python scripts/verify.py
-sh plugins/codex-routecraft/scripts/install-agents.sh --check
+sh scripts/setup-local.sh
 ```
 
-Windows:
+Windows PowerShell:
 
 ```powershell
-python .\scripts\verify.py
-& .\plugins\codex-routecraft\scripts\install-agents.ps1 -Check
+& .\scripts\setup-local.ps1
 ```
 
-## Conflicts
+## Create a private decision store
 
-Agent names are prefixed with `routecraft_` to reduce collision risk. The installer refuses to overwrite a different existing file by default.
-
-If you intentionally want to replace a conflicting RouteCraft profile:
-
-macOS/Linux:
+The public plugin store is read-only for personal learning.
 
 ```sh
-sh plugins/codex-routecraft/scripts/install-agents.sh --force
+python plugins/codex-routecraft/scripts/routecraft_memory.py init \
+  --store ~/routecraft-memory \
+  --git-init \
+  --configure
 ```
 
 PowerShell:
 
 ```powershell
-& .\plugins\codex-routecraft\scripts\install-agents.ps1 -Force
+& .\plugins\codex-routecraft\scripts\routecraft-memory.ps1 init `
+  --store "$HOME\routecraft-memory" `
+  --git-init `
+  --configure
 ```
 
-Force mode creates a timestamped backup first.
+For three or more computers, create an empty private GitHub repository. Configure the first device with `--remote`, then use `--clone` on later devices. Full commands are in:
 
-## Uninstall
+- `docs/PERSISTENT_DECISION_LAYER.md`
+- `docs/PERSISTENT_DECISION_LAYER.ja.md`
 
-Remove the plugin with your Codex plugin management command, then delete only the namespaced files you installed from `~/.codex/agents/`:
+## Verify
 
-- routecraft_luna_low.toml
-- routecraft_luna_medium.toml
-- routecraft_luna_max.toml
-- routecraft_terra_medium.toml
-- routecraft_terra_high.toml
-- routecraft_sol_reviewer.toml
+```sh
+python scripts/verify.py
+python -m unittest discover -s tests -v
+```
 
-Do not delete unrelated agent profiles.
+Agent-profile checks:
+
+```sh
+sh plugins/codex-routecraft/scripts/install-agents.sh --check
+```
+
+PowerShell:
+
+```powershell
+& .\plugins\codex-routecraft\scripts\install-agents.ps1 -Check
+```

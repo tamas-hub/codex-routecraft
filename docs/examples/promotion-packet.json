@@ -1,0 +1,9 @@
+{
+  "candidate_id": "CAND-20260819T120000Z-MAC-A1B2",
+  "title": "Validate persistence boundaries before runtime diagnosis",
+  "decision": "When state disappears after restart, verify the storage path and durability contract before blaming an OS or runtime update.",
+  "when_to_apply": "State disappears after restart, suspension, or reboot.",
+  "when_not_to_apply": "Evidence already proves a serialization or migration failure.",
+  "rationale": "Independent mobile and desktop cases produced the same symptom from volatile storage.",
+  "verification": "Restart the process and inspect the resolved durable storage location."
+}

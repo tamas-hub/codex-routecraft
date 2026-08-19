@@ -1,19 +1,5 @@
-# Decision Index
+# RouteCraft Decision Index
 
-Keep this file compact. It is the first retrieval surface for RouteCraft.
+The bundled seed currently contains no decision records.
 
-## Rules
-
-_No validated rules yet._
-
-## Cases
-
-_No reusable cases yet._
-
-## Candidates
-
-_No candidates yet._
-
-## Retrieval hints
-
-When adding entries, include short searchable keywords such as runtime, framework, symptom, subsystem, failure mode, and verification method. Link to the full record instead of copying its contents here.
+Runtime retrieval is performed by `scripts/routecraft_memory.py recall`. External private stores use a generated local index under `.routecraft/index.json` so multiple computers do not create merge conflicts in a shared index file.
