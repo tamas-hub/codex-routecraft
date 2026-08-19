@@ -122,7 +122,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def configure_text_streams() -> None:
+    """Use deterministic UTF-8 output on Windows consoles and captured pipes."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (OSError, ValueError):
+            # Some embedded runtimes expose a stream that cannot be reconfigured.
+            pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    configure_text_streams()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
