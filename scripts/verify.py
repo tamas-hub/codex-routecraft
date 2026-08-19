@@ -13,7 +13,7 @@ MEMORY = PLUGIN / "intelligence"
 MEMORY_SCRIPT = PLUGIN / "scripts" / "routecraft_memory.py"
 MEMORY_PACKAGE = PLUGIN / "scripts" / "routecraft_memory_lib"
 
-EXPECTED_VERSION = "0.3.1"
+EXPECTED_VERSION = "0.3.2"
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
@@ -79,6 +79,7 @@ required_files = [
     ROOT / "docs" / "PERSISTENT_DECISION_LAYER.ja.md",
     ROOT / "tests" / "test_routecraft_memory.py",
     ROOT / "tests" / "test_routecraft_git_privacy.py",
+    ROOT / "tests" / "test_routecraft_stdin_utf8.py",
     ROOT / "README.md",
     ROOT / "README.ja.md",
     ROOT / "LICENSE",
@@ -207,6 +208,8 @@ for term in [
     "check_sensitive_text",
     "configure_private_git_identity",
     "ROUTECRAFT_GIT_EMAIL",
+    "configure_utf8_stdin",
+    "utf-8-sig",
 ]:
     if term not in implementation:
         fail(f"memory CLI package missing implementation term: {term}")
