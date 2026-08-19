@@ -13,7 +13,7 @@ MEMORY = PLUGIN / "intelligence"
 MEMORY_SCRIPT = PLUGIN / "scripts" / "routecraft_memory.py"
 MEMORY_PACKAGE = PLUGIN / "scripts" / "routecraft_memory_lib"
 
-EXPECTED_VERSION = "0.3.0"
+EXPECTED_VERSION = "0.3.1"
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
@@ -26,8 +26,8 @@ EXPECTED_AGENTS = {
 errors: list[str] = []
 
 
-def fail(msg: str) -> None:
-    errors.append(msg)
+def fail(message: str) -> None:
+    errors.append(message)
 
 
 def load_json(path: Path):
@@ -78,6 +78,7 @@ required_files = [
     ROOT / "docs" / "PERSISTENT_DECISION_LAYER.md",
     ROOT / "docs" / "PERSISTENT_DECISION_LAYER.ja.md",
     ROOT / "tests" / "test_routecraft_memory.py",
+    ROOT / "tests" / "test_routecraft_git_privacy.py",
     ROOT / "README.md",
     ROOT / "README.ja.md",
     ROOT / "LICENSE",
@@ -89,7 +90,10 @@ for required in required_files:
 manifest = load_json(manifest_path) if manifest_path.is_file() else {}
 market = load_json(market_path) if market_path.is_file() else {}
 sentinel = load_json(sentinel_path) if sentinel_path.is_file() else {}
-for example in [ROOT / "docs" / "examples" / "case-packet.json", ROOT / "docs" / "examples" / "promotion-packet.json"]:
+for example in [
+    ROOT / "docs" / "examples" / "case-packet.json",
+    ROOT / "docs" / "examples" / "promotion-packet.json",
+]:
     if example.is_file():
         load_json(example)
     else:
@@ -107,7 +111,7 @@ for keyword in {"persistent-memory", "decision-retrieval", "cross-device"}:
         fail(f"plugin.json missing keyword: {keyword}")
 
 plugins = market.get("plugins", []) if isinstance(market, dict) else []
-entry = next((p for p in plugins if p.get("name") == "codex-routecraft"), None)
+entry = next((item for item in plugins if item.get("name") == "codex-routecraft"), None)
 if not entry:
     fail("marketplace missing codex-routecraft entry")
 else:
@@ -122,10 +126,9 @@ if sentinel.get("purpose") != "RouteCraft persistent decision memory":
     fail("persistent memory sentinel purpose mismatch")
 
 agent_dir = PLUGIN / "agents"
-actual = {p.name for p in agent_dir.glob("*.toml")}
-expected = set(EXPECTED_AGENTS)
-if actual != expected:
-    fail(f"agent file set mismatch; expected {sorted(expected)}, got {sorted(actual)}")
+actual_agents = {path.name for path in agent_dir.glob("*.toml")}
+if actual_agents != set(EXPECTED_AGENTS):
+    fail(f"agent file set mismatch; expected {sorted(EXPECTED_AGENTS)}, got {sorted(actual_agents)}")
 
 for filename, (name, model, effort) in EXPECTED_AGENTS.items():
     path = agent_dir / filename
@@ -148,7 +151,7 @@ if reviewer.get("sandbox_mode") != "read-only":
 
 if skill_path.is_file():
     skill = skill_path.read_text(encoding="utf-8")
-    required_terms = [
+    for term in [
         "ROUTECRAFT PLAN",
         "execution: solo | delegate | parallel",
         "Parent verification is mandatory",
@@ -158,21 +161,20 @@ if skill_path.is_file():
         "Recall before rediscovering",
         "routecraft_memory.py",
         "Learn after verified meaningful work",
-    ]
-    for term in required_terms:
+    ]:
         if term not in skill:
             fail(f"SKILL.md missing required contract text: {term}")
 
 if memory_skill.is_file():
-    memory_skill_text = memory_skill.read_text(encoding="utf-8")
+    text = memory_skill.read_text(encoding="utf-8")
     for term in ["Safety contract", "Recall", "Learn", "Promote", "Sync"]:
-        if term not in memory_skill_text:
+        if term not in text:
             fail(f"memory/SKILL.md missing section: {term}")
 
 if memory_reference.is_file():
-    reference = memory_reference.read_text(encoding="utf-8")
+    text = memory_reference.read_text(encoding="utf-8")
     for term in ["Pre-task recall", "Post-task learning", "Promotion", "Cross-device synchronization"]:
-        if term not in reference:
+        if term not in text:
             fail(f"persistent-decision-layer.md missing section: {term}")
 
 for template_name, kind in [("case.md", "case"), ("candidate.md", "candidate"), ("rule.md", "rule")]:
@@ -185,18 +187,16 @@ for template_name, kind in [("case.md", "case"), ("candidate.md", "candidate"), 
             fail(f"{path.relative_to(ROOT)} missing template term: {term}")
 
 memory_python_files = [MEMORY_SCRIPT, *sorted(MEMORY_PACKAGE.glob("*.py"))]
-for memory_python in memory_python_files:
-    if not memory_python.is_file():
+for path in memory_python_files:
+    if not path.is_file():
         continue
     try:
-        py_compile.compile(str(memory_python), doraise=True)
+        py_compile.compile(str(path), doraise=True)
     except py_compile.PyCompileError as exc:
-        fail(f"{memory_python.relative_to(ROOT)} compilation failed: {exc}")
+        fail(f"{path.relative_to(ROOT)} compilation failed: {exc}")
 
-memory_implementation = "\n".join(
-    path.read_text(encoding="utf-8")
-    for path in memory_python_files
-    if path.is_file()
+implementation = "\n".join(
+    path.read_text(encoding="utf-8") for path in memory_python_files if path.is_file()
 )
 for term in [
     "def recall_records",
@@ -205,12 +205,16 @@ for term in [
     "def sync_store",
     "ensure_dedicated_git_root",
     "check_sensitive_text",
+    "configure_private_git_identity",
+    "ROUTECRAFT_GIT_EMAIL",
 ]:
-    if term not in memory_implementation:
+    if term not in implementation:
         fail(f"memory CLI package missing implementation term: {term}")
 
 for path in ROOT.rglob("*"):
-    if path.is_file() and path.suffix.lower() in {".md", ".json", ".toml", ".py", ".sh", ".ps1", ".yml", ".yaml"}:
+    if path.is_file() and path.suffix.lower() in {
+        ".md", ".json", ".toml", ".py", ".sh", ".ps1", ".yml", ".yaml"
+    }:
         text = path.read_text(encoding="utf-8", errors="replace")
         if ("[" + "TODO:") in text or ("TODO" + "_PLACEHOLDER") in text:
             fail(f"unfinished placeholder in {path.relative_to(ROOT)}")
