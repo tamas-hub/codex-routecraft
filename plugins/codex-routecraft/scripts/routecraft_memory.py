@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 
 def configure_private_git_identity() -> None:
@@ -26,7 +27,29 @@ def configure_private_git_identity() -> None:
     os.environ["GIT_COMMITTER_EMAIL"] = email
 
 
+def configure_utf8_stdin() -> None:
+    """Decode redirected JSON stdin as UTF-8, independent of the Windows code page.
+
+    Codex and modern PowerShell write redirected process input as UTF-8, while a
+    Windows Python process can otherwise inherit a legacy ANSI encoding for
+    redirected stdin. Reconfiguring before the CLI imports or reads input avoids
+    mojibake and UnicodeDecodeError for Japanese learning/promotion packets.
+    `utf-8-sig` also accepts an optional UTF-8 BOM.
+    """
+
+    reconfigure = getattr(sys.stdin, "reconfigure", None)
+    if not callable(reconfigure):
+        return
+    try:
+        reconfigure(encoding="utf-8-sig", errors="strict")
+    except (OSError, ValueError):
+        # Embedded runtimes may expose a stream that cannot be reconfigured.
+        # The normal script and cross-platform wrappers use a TextIOWrapper.
+        pass
+
+
 configure_private_git_identity()
+configure_utf8_stdin()
 
 from routecraft_memory_lib.cli import main  # noqa: E402
 
