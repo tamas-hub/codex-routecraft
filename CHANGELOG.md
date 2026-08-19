@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added an idempotent multi-device bootstrap for Windows and macOS.
+- Standardized RouteCraft source at `~/codex-routecraft` and private decision memory at `~/routecraft-memory`.
+- Added a shared non-secret fleet configuration inside the tracked Decision Store sentinel.
+- Added device-local profiles under `~/.codex/routecraft/` while keeping credentials, absolute paths, plugin cache, and generated agent files local.
+- Added cross-platform tests, bootstrap syntax checks, and English/Japanese fleet-operation guides.
+
 ## 0.3.2 - 2026-08-19
 
 - Made redirected JSON stdin deterministic UTF-8 instead of inheriting a Windows legacy code page.

@@ -29,7 +29,7 @@ jobs:
       - name: Verify RouteCraft contracts
         run: python scripts/verify.py
 
-      - name: Test persistent decision memory
+      - name: Test persistent decision memory and fleet bootstrap
         run: python -m unittest discover -s tests -v
 
       - name: Check shell syntax
@@ -38,6 +38,7 @@ jobs:
           sh -n plugins/codex-routecraft/scripts/install-agents.sh
           sh -n plugins/codex-routecraft/scripts/routecraft-memory.sh
           sh -n scripts/setup-local.sh
+          sh -n scripts/bootstrap-device.sh
 
       - name: Check PowerShell syntax
         if: runner.os == 'Windows'
@@ -46,6 +47,7 @@ jobs:
           [scriptblock]::Create((Get-Content plugins/codex-routecraft/scripts/install-agents.ps1 -Raw)) | Out-Null
           [scriptblock]::Create((Get-Content plugins/codex-routecraft/scripts/routecraft-memory.ps1 -Raw)) | Out-Null
           [scriptblock]::Create((Get-Content scripts/setup-local.ps1 -Raw)) | Out-Null
+          [scriptblock]::Create((Get-Content scripts/bootstrap-device.ps1 -Raw)) | Out-Null
 
       - name: Check whitespace
         if: runner.os == 'Linux'
