@@ -4,6 +4,7 @@ from __future__ import annotations
 from .common import *  # noqa: F401,F403
 from .commands import *  # noqa: F401,F403
 
+
 def add_store_argument(parser: argparse.ArgumentParser, *, required: bool = False) -> None:
     parser.add_argument(
         "--store",
@@ -17,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="routecraft-memory",
         description="Persistent decision memory for RouteCraft",
     )
-    parser.add_argument("--version", action="version", version="routecraft-memory 0.3.0")
+    parser.add_argument("--version", action="version", version="routecraft-memory 0.3.2")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Create or clone a dedicated memory store")
