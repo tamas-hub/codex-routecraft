@@ -1,6 +1,6 @@
 ---
 name: orchestration
-description: "Sol-led adaptive Codex orchestration: default solo, cheapest-viable delegation, bounded parallelism, parent verification, and risk-gated fresh Sol review."
+description: "Sol-led adaptive Codex orchestration: default solo, cheapest-viable delegation, bounded parallelism, parent verification, risk-gated fresh Sol review, and persistent decision retrieval."
 ---
 
 # RouteCraft Orchestration
@@ -13,6 +13,7 @@ Read these references before the first delegation:
 - `references/role-contracts.md` for worker and reviewer packets.
 - `references/compatibility.md` for capability-dependent spawning.
 - `references/operations.md` for installation and runtime checks.
+- `references/persistent-decision-layer.md` for retrieving and preserving reusable decision knowledge.
 
 ## Root contract
 
@@ -23,11 +24,21 @@ The root owns:
 - requirement resolution and material ambiguity;
 - architecture, interfaces, and decomposition;
 - route and lane selection;
+- relevant persistent-decision retrieval;
 - child ownership boundaries;
 - complete diff inspection;
 - rerunning requested verification;
 - escalation and review decisions;
-- final acceptance.
+- final acceptance;
+- post-task extraction of reusable decision knowledge.
+
+## Retrieve before rediscovering
+
+Before substantial investigation or implementation, follow `references/persistent-decision-layer.md`.
+
+Read the compact decision index first. Load only rules or cases that plausibly match the current task. Never load the full intelligence store by default. Retrieved memory is prior evidence, not truth: current repository evidence, authoritative documentation, and reproducible tests take precedence.
+
+If a retrieved rule or case materially changes routing, diagnosis, implementation, or verification, preserve that provenance for the completion report.
 
 ## Declare the route before task tools
 
@@ -133,6 +144,14 @@ The reviewer returns exactly one verdict: `ship`, `fix-first`, or `rethink`.
 
 Any implementation change after a review invalidates that verdict. Re-verify and obtain a fresh review when the route still requires one.
 
+## Preserve reusable decisions after meaningful work
+
+After verification, inspect the completed task for reusable decision value. Follow `references/persistent-decision-layer.md`.
+
+Record a compact case when a non-obvious root cause, failed path, reusable verification recipe, recurring decision pattern, or important integration constraint would save future investigation. Record an unverified pattern as a candidate. Do not promote it to a validated rule merely because it worked once.
+
+Never store secrets, raw transcripts, full logs, or copied source code merely to increase memory volume.
+
 ## Completion report
 
 End with:
@@ -141,5 +160,7 @@ End with:
 - files changed;
 - exact verification performed and outcome;
 - reviewer verdict when used;
+- persistent rules/cases that materially influenced the work;
+- new case/candidate/rule captured, if any;
 - residual risk or compatibility limitations;
 - whether the intended child model/effort was verified or only requested.
