@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 - 2026-08-19
+
+- Prevented GitHub GH007 push rejection when a workstation's inherited global Git email is private.
+- Memory commits now use a neutral no-reply author and committer identity by default.
+- Added `ROUTECRAFT_GIT_NAME` and `ROUTECRAFT_GIT_EMAIL` overrides for users who want their own public or GitHub no-reply identity.
+- Added cross-platform regression coverage proving that a private global Git identity is not written into synchronized memory commits.
+
 ## 0.3.0 - 2026-08-19
 
 - Added the Persistent Decision Layer with bounded recall, structured learning, and evidence-gated rule promotion.
