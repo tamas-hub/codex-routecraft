@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="routecraft-memory",
         description="Persistent decision memory for RouteCraft",
     )
-    parser.add_argument("--version", action="version", version="routecraft-memory 0.4.0")
+    parser.add_argument("--version", action="version", version="routecraft-memory 0.5.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Create or clone a dedicated memory store")
@@ -132,7 +132,6 @@ def configure_text_streams() -> None:
         try:
             reconfigure(encoding="utf-8", errors="backslashreplace")
         except (OSError, ValueError):
-            # Some embedded runtimes expose a stream that cannot be reconfigured.
             pass
 
 
