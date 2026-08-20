@@ -77,6 +77,46 @@ Use `--allow-first-device` only when deliberately initializing an empty private 
 
 ## Windows
 
+On an additional Windows device that already has a Decision Store connection, paste this complete block into PowerShell. The private remote is discovered locally and is not printed. The process stops instead of overwriting a dirty RouteCraft checkout.
+
+```powershell
+$RouteCraftDir = Join-Path $env:USERPROFILE 'codex-routecraft'
+
+if (-not (Test-Path -LiteralPath (Join-Path $RouteCraftDir '.git') -PathType Container)) {
+    git clone --branch main 'https://github.com/tamas-hub/codex-routecraft.git' $RouteCraftDir
+    if ($LASTEXITCODE -ne 0) { throw 'RouteCraft clone failed.' }
+} else {
+    $ExpectedOrigins = @(
+        'https://github.com/tamas-hub/codex-routecraft.git',
+        'git@github.com:tamas-hub/codex-routecraft.git'
+    )
+    $Origin = (git -C $RouteCraftDir remote get-url origin | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'RouteCraft origin lookup failed.' }
+    if ($ExpectedOrigins -notcontains $Origin) { throw "Unexpected RouteCraft origin: $Origin" }
+
+    $Dirty = @(git -C $RouteCraftDir status --porcelain)
+    if ($LASTEXITCODE -ne 0) { throw 'RouteCraft status check failed.' }
+    if ($Dirty.Count -gt 0) { throw "RouteCraft has local changes: $RouteCraftDir" }
+
+    git -C $RouteCraftDir fetch origin main
+    if ($LASTEXITCODE -ne 0) { throw 'RouteCraft fetch failed.' }
+    git -C $RouteCraftDir checkout main
+    if ($LASTEXITCODE -ne 0) { throw 'RouteCraft main checkout failed.' }
+    git -C $RouteCraftDir pull --ff-only origin main
+    if ($LASTEXITCODE -ne 0) { throw 'RouteCraft fast-forward update failed.' }
+}
+
+Set-ExecutionPolicy -Scope Process Bypass -Force
+& "$RouteCraftDir\scripts\bootstrap-device.ps1" `
+  -EnableProjectSourceGuard `
+  -GitHubOwner 'tamas-hub' `
+  -Json
+```
+
+After it succeeds, close open Codex tasks and app windows, start a fresh task, and use `/hooks` to review and trust the RouteCraft `SessionStart` and `Stop` hooks once. Run the same block on devices 2 and 3. No command is needed during normal use; rerun the block when updating RouteCraft.
+
+Only a first-time device with no existing Decision Store connection needs the explicit `-MemoryRemote` form below.
+
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 

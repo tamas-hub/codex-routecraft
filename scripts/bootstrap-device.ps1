@@ -1,6 +1,5 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string]$MemoryRemote,
 
     [string]$SourceRemote = 'https://github.com/tamas-hub/codex-routecraft.git',
@@ -53,6 +52,30 @@ function Invoke-Python {
 Require-Command git
 Require-Command codex
 $Python = Resolve-Python
+
+if ([string]::IsNullOrWhiteSpace($MemoryRemote)) {
+    $MemoryGitDir = Join-Path $MemoryDir '.git'
+    if (Test-Path -LiteralPath $MemoryGitDir -PathType Container) {
+        $MemoryRemote = (git -C $MemoryDir remote get-url origin | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Existing Decision Store remote lookup failed.'
+        }
+    } else {
+        $DeviceProfilePath = Join-Path $env:USERPROFILE '.codex\routecraft\device.json'
+        if (Test-Path -LiteralPath $DeviceProfilePath -PathType Leaf) {
+            $DeviceProfile = Get-Content -Raw -LiteralPath $DeviceProfilePath | ConvertFrom-Json
+            if (-not [string]::IsNullOrWhiteSpace([string]$DeviceProfile.memory_remote)) {
+                $MemoryRemote = [string]$DeviceProfile.memory_remote
+            }
+        }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($MemoryRemote)) {
+    throw '-MemoryRemote is required when this device has no existing Decision Store connection.'
+}
+if ($MemoryRemote -match '^https?://[^/]+@') {
+    throw 'MemoryRemote must not contain embedded credentials.'
+}
 
 Write-Host '=== RouteCraft device bootstrap ===' -ForegroundColor Cyan
 Write-Host "Source: $SourceDir"
