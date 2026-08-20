@@ -159,10 +159,16 @@ class RouteCraftFleetTests(unittest.TestCase):
         shim.write_text("@echo off\n", encoding="utf-8")
         native.write_bytes(b"native")
 
+        # Simulate only the Windows branch inside routecraft_device. Patching
+        # os.name alone also changes pathlib.Path's factory process-wide on a
+        # Linux CI runner, so pin DEVICE.Path to the native concrete path type
+        # created before the patch.
+        host_path_type = type(shim)
         with mock.patch.object(DEVICE.os, "name", "nt"), mock.patch.object(
-            DEVICE.shutil, "which", return_value=str(shim)
-        ):
-            self.assertEqual(Path(DEVICE.resolve_codex_executable()), native.resolve())
+            DEVICE, "Path", host_path_type
+        ), mock.patch.object(DEVICE.shutil, "which", return_value=str(shim)):
+            resolved = host_path_type(DEVICE.resolve_codex_executable())
+            self.assertEqual(resolved, native.resolve())
 
 
 if __name__ == "__main__":
