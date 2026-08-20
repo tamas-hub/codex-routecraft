@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0 - 2026-08-20
+
+- Added an opt-in local RouteCraft Memory effectiveness evaluator.
+- Added `off`, `recall`, and `full` task modes plus opt-in round-robin A/B/C assignment.
+- Added post-verification usefulness labels for recalled records: useful, misleading, stale, or neutral by omission.
+- Added live effectiveness metrics including useful-task rate, observed precision, useful-record MRR, cross-project reuse, cross-device reuse, time/tool-call/failed-hypothesis comparisons, estimated saved time, and Decision Compression Ratio.
+- Added a local retrieval benchmark runner for Hit@K, Precision@K, Recall@K, and MRR without persisting raw benchmark queries.
+- Added a coverage-aware RouteCraft Memory Score that withholds the 100-point score while less than 50% of weighted evidence is available.
+- Kept evaluation logs local under `~/.codex/routecraft/evaluation/`; raw prompts, queries, transcripts, source code, logs, credentials, secrets, and absolute user paths are excluded.
+- Added compact evaluation aggregates to RouteCraft Observatory heartbeats without sending repository names, task IDs, record IDs, queries, prompts, or local paths.
+- Added English/Japanese evaluation methodology and regression coverage.
+
 ## 0.4.0 - 2026-08-20
 
 - Added an idempotent multi-device bootstrap for Windows and macOS.

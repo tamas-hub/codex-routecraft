@@ -12,8 +12,10 @@ PLUGIN = ROOT / "plugins" / "codex-routecraft"
 MEMORY = PLUGIN / "intelligence"
 MEMORY_SCRIPT = PLUGIN / "scripts" / "routecraft_memory.py"
 MEMORY_PACKAGE = PLUGIN / "scripts" / "routecraft_memory_lib"
+EVALUATION_SCRIPT = PLUGIN / "scripts" / "routecraft_evaluation.py"
+OBSERVATORY_SCRIPT = PLUGIN / "scripts" / "routecraft_observatory.py"
 
-EXPECTED_VERSION = "0.4.0"
+EXPECTED_VERSION = "0.5.0"
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
@@ -50,6 +52,7 @@ manifest_path = PLUGIN / ".codex-plugin" / "plugin.json"
 market_path = ROOT / ".agents" / "plugins" / "marketplace.json"
 skill_path = PLUGIN / "skills" / "orchestration" / "SKILL.md"
 memory_reference = PLUGIN / "skills" / "orchestration" / "references" / "persistent-decision-layer.md"
+evaluation_reference = PLUGIN / "skills" / "orchestration" / "references" / "memory-evaluation.md"
 memory_skill = PLUGIN / "skills" / "memory" / "SKILL.md"
 sentinel_path = MEMORY / ".routecraft-store.json"
 
@@ -58,6 +61,7 @@ required_files = [
     market_path,
     skill_path,
     memory_reference,
+    evaluation_reference,
     memory_skill,
     sentinel_path,
     MEMORY / "README.md",
@@ -66,6 +70,8 @@ required_files = [
     MEMORY / "templates" / "candidate.md",
     MEMORY / "templates" / "rule.md",
     MEMORY_SCRIPT,
+    EVALUATION_SCRIPT,
+    OBSERVATORY_SCRIPT,
     MEMORY_PACKAGE / "__init__.py",
     MEMORY_PACKAGE / "common.py",
     MEMORY_PACKAGE / "search.py",
@@ -77,8 +83,12 @@ required_files = [
     PLUGIN / "scripts" / "routecraft-memory.ps1",
     ROOT / "docs" / "PERSISTENT_DECISION_LAYER.md",
     ROOT / "docs" / "PERSISTENT_DECISION_LAYER.ja.md",
+    ROOT / "docs" / "MEMORY_EVALUATION.md",
+    ROOT / "docs" / "MEMORY_EVALUATION.ja.md",
     ROOT / "tests" / "test_routecraft_memory.py",
+    ROOT / "tests" / "test_routecraft_evaluation.py",
     ROOT / "tests" / "test_routecraft_git_privacy.py",
+    ROOT / "tests" / "test_routecraft_observatory.py",
     ROOT / "tests" / "test_routecraft_source_guard.py",
     ROOT / "tests" / "test_routecraft_stdin_utf8.py",
     ROOT / "README.md",
@@ -110,7 +120,7 @@ if manifest.get("version") != EXPECTED_VERSION:
 if manifest.get("skills") != "./skills/":
     fail("plugin.json skills must be ./skills/")
 keywords = set(manifest.get("keywords", [])) if isinstance(manifest.get("keywords"), list) else set()
-for keyword in {"persistent-memory", "decision-retrieval", "cross-device", "github-source-of-truth"}:
+for keyword in {"persistent-memory", "decision-retrieval", "cross-device", "github-source-of-truth", "memory-evaluation", "observability"}:
     if keyword not in keywords:
         fail(f"plugin.json missing keyword: {keyword}")
 
@@ -165,6 +175,8 @@ if skill_path.is_file():
         "Recall before rediscovering",
         "routecraft_memory.py",
         "Learn after verified meaningful work",
+        "Measure memory effectiveness when enabled",
+        "routecraft_evaluation.py",
     ]:
         if term not in skill:
             fail(f"SKILL.md missing required contract text: {term}")
@@ -181,6 +193,12 @@ if memory_reference.is_file():
         if term not in text:
             fail(f"persistent-decision-layer.md missing section: {term}")
 
+if evaluation_reference.is_file():
+    text = evaluation_reference.read_text(encoding="utf-8")
+    for term in ["Local-only evaluation", "Record recall without storing the query", "Scorecard", "Retrieval benchmark", "Experimental modes"]:
+        if term not in text:
+            fail(f"memory-evaluation.md missing section: {term}")
+
 for template_name, kind in [("case.md", "case"), ("candidate.md", "candidate"), ("rule.md", "rule")]:
     path = MEMORY / "templates" / template_name
     if not path.is_file():
@@ -192,7 +210,7 @@ for template_name, kind in [("case.md", "case"), ("candidate.md", "candidate"), 
 
 memory_python_files = [MEMORY_SCRIPT, *sorted(MEMORY_PACKAGE.glob("*.py"))]
 source_guard_script = PLUGIN / "scripts" / "routecraft_source_guard.py"
-python_files = [*memory_python_files, source_guard_script]
+python_files = [*memory_python_files, source_guard_script, EVALUATION_SCRIPT, OBSERVATORY_SCRIPT]
 for path in python_files:
     if not path.is_file():
         continue
@@ -201,9 +219,7 @@ for path in python_files:
     except py_compile.PyCompileError as exc:
         fail(f"{path.relative_to(ROOT)} compilation failed: {exc}")
 
-implementation = "\n".join(
-    path.read_text(encoding="utf-8") for path in memory_python_files if path.is_file()
-)
+implementation = "\n".join(path.read_text(encoding="utf-8") for path in memory_python_files if path.is_file())
 for term in [
     "def recall_records",
     "def create_learning_record",
@@ -218,6 +234,27 @@ for term in [
 ]:
     if term not in implementation:
         fail(f"memory CLI package missing implementation term: {term}")
+
+if EVALUATION_SCRIPT.is_file():
+    evaluation_text = EVALUATION_SCRIPT.read_text(encoding="utf-8")
+    for term in [
+        "VALID_MODES = (\"off\", \"recall\", \"full\")",
+        "observed_precision",
+        "cross_project_useful",
+        "cross_device_useful",
+        "privacy_integrity",
+        "benchmark-last.json",
+        "insufficient-data",
+        "round-robin",
+    ]:
+        if term not in evaluation_text:
+            fail(f"Memory evaluator missing required contract text: {term}")
+
+if OBSERVATORY_SCRIPT.is_file():
+    observatory_text = OBSERVATORY_SCRIPT.read_text(encoding="utf-8")
+    for term in ["evaluation_status", "summary", "--compact", '"evaluation":evaluation']:
+        if term not in observatory_text:
+            fail(f"Observatory missing evaluation telemetry contract text: {term}")
 
 hooks_path = PLUGIN / "hooks" / "hooks.json"
 hooks = load_json(hooks_path) if hooks_path.is_file() else {}
@@ -242,9 +279,7 @@ if source_guard_script.is_file():
             fail(f"Source Guard missing required contract text: {term}")
 
 for path in ROOT.rglob("*"):
-    if path.is_file() and path.suffix.lower() in {
-        ".md", ".json", ".toml", ".py", ".sh", ".ps1", ".yml", ".yaml"
-    }:
+    if path.is_file() and path.suffix.lower() in {".md", ".json", ".toml", ".py", ".sh", ".ps1", ".yml", ".yaml"}:
         text = path.read_text(encoding="utf-8", errors="replace")
         if ("[" + "TODO:") in text or ("TODO" + "_PLACEHOLDER") in text:
             fail(f"unfinished placeholder in {path.relative_to(ROOT)}")
@@ -261,4 +296,5 @@ print(f"- marketplace: {market.get('name')}")
 print(f"- agents: {len(EXPECTED_AGENTS)}")
 print("- orchestration contract: present")
 print("- persistent decision layer: present")
+print("- memory evaluation: present")
 print(f"- Python tools: compile ({len(python_files)} modules)")

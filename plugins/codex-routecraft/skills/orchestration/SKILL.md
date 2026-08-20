@@ -1,6 +1,6 @@
 ---
 name: orchestration
-description: "Sol-led adaptive Codex orchestration with cheapest-viable delegation, bounded parallelism, parent verification, risk-gated fresh Sol review, and persistent decision recall/learning."
+description: "Sol-led adaptive Codex orchestration with cheapest-viable delegation, bounded parallelism, parent verification, risk-gated fresh Sol review, persistent decision recall/learning, and opt-in memory effectiveness evaluation."
 ---
 
 # RouteCraft Orchestration
@@ -14,6 +14,7 @@ Read these references before the first delegation:
 - `references/compatibility.md` for capability-dependent spawning.
 - `references/operations.md` for installation and runtime checks.
 - `references/persistent-decision-layer.md` for bounded recall, learning, promotion, and cross-device synchronization.
+- `references/memory-evaluation.md` for local-only effectiveness measurement and optional A/B/C trials.
 
 ## Root contract
 
@@ -30,7 +31,8 @@ The root owns:
 - rerunning requested verification;
 - escalation and review decisions;
 - final acceptance;
-- post-task extraction of reusable decision knowledge.
+- post-task extraction of reusable decision knowledge;
+- post-verification classification of recalled memory when local evaluation is enabled.
 
 ## Recall before rediscovering
 
@@ -39,6 +41,24 @@ Before substantial investigation or implementation, follow `references/persisten
 Run a bounded recall using the task symptom, subsystem, technologies, and verification target. Load only relevant returned excerpts. Do not load the complete memory store by default.
 
 Retrieved memory is prior evidence, not truth. Current repository evidence, current authoritative documentation, and reproducible tests take precedence. Preserve recalled record IDs for the completion report when they materially affect the route or solution.
+
+## Measure memory effectiveness when enabled
+
+For substantive tasks, follow `references/memory-evaluation.md` when `scripts/routecraft_evaluation.py` is available.
+
+Start the local evaluator before memory recall. Evaluation is opt-in; if it reports `tracking: false`, continue normally and do not add measurement overhead.
+
+When tracking is enabled, preserve the returned evaluation task ID and obey its mode:
+
+- `off`: skip persistent memory recall and post-task learning for this measured task;
+- `recall`: perform bounded recall, but skip learning/promotion from this task;
+- `full`: use normal recall plus verified post-task learning.
+
+After recall, record only returned record IDs and ranks. Never persist the raw query. After parent verification, classify recalled records as `useful`, `misleading`, `stale`, or leave them neutral. Record elapsed time and other counters only when they are observable; never invent tool-call counts, failed-hypothesis counts, or compression inputs to improve the score.
+
+Evaluation data is local-only by default and must not be synchronized through the Decision Store. It must not contain prompts, conversations, source code, raw logs, credentials, secrets, or absolute user paths.
+
+Evaluation does not change acceptance precedence. A good score never makes remembered guidance more authoritative than current evidence.
 
 ## Declare the route before task tools
 
@@ -157,6 +177,8 @@ Do not store secrets, personal data, raw transcripts, full logs, copied source c
 
 When a candidate becomes eligible for promotion, inspect the evidence and promote only a bounded rule that survives counterexamples. Never invoke the exceptional `--authoritative --human-approved` path without explicit human approval.
 
+When evaluation mode is `off`, skip this section's memory writes for the measured task. When evaluation mode is `recall`, also skip memory writes so the trial measures retrieval without self-updating the store. `full` uses this normal learning contract.
+
 ## Completion report
 
 End with:
@@ -168,5 +190,6 @@ End with:
 - persistent rule/case IDs that materially influenced the work;
 - new case/candidate/rule IDs captured or updated;
 - memory synchronization outcome when attempted;
+- evaluation mode, task ID, and useful/misleading/stale recalled IDs when tracking was enabled;
 - residual risk or compatibility limitations;
 - whether the intended child model/effort was verified or only requested.
