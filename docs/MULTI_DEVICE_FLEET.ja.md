@@ -105,6 +105,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $RouteCraftDir '.git') -PathType Con
     if ($LASTEXITCODE -ne 0) { throw 'RouteCraft main checkout failed.' }
     git -C $RouteCraftDir pull --ff-only origin main
     if ($LASTEXITCODE -ne 0) { throw 'RouteCraft fast-forward update failed.' }
+
+    $LocalHead = (git -C $RouteCraftDir rev-parse HEAD | Out-String).Trim()
+    $GitHubHead = (git -C $RouteCraftDir rev-parse origin/main | Out-String).Trim()
+    if ($LocalHead -ne $GitHubHead) { throw 'RouteCraft must exactly match origin/main.' }
 }
 
 Set-ExecutionPolicy -Scope Process Bypass -Force

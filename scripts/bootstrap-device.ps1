@@ -98,6 +98,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $SourceDir '.git') -PathType Contain
     if ($LASTEXITCODE -ne 0) { throw 'RouteCraft source branch checkout failed.' }
     git -C $SourceDir pull --ff-only origin $SourceBranch
     if ($LASTEXITCODE -ne 0) { throw 'RouteCraft source update failed. Resolve local changes before retrying.' }
+
+    $SourceHead = (git -C $SourceDir rev-parse HEAD | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'RouteCraft local HEAD lookup failed.' }
+    $OriginHead = (git -C $SourceDir rev-parse "origin/$SourceBranch" | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'RouteCraft origin HEAD lookup failed.' }
+    if ($SourceHead -ne $OriginHead) {
+        throw "RouteCraft must exactly match origin/$SourceBranch before bootstrap."
+    }
 }
 
 $DeviceScript = Join-Path $SourceDir 'plugins\codex-routecraft\scripts\routecraft_device.py'
