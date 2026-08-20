@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -117,6 +118,26 @@ class RouteCraftFleetTests(unittest.TestCase):
 
         with self.assertRaises(DEVICE.FleetError):
             DEVICE.ensure_fleet_config(store, self.payload())
+
+    def test_source_guard_config_is_local_private_and_has_no_secret_fields(self) -> None:
+        codex_home = self.base / "codex-home"
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+            target = DEVICE.source_control_config("example-owner", True)
+            self.assertIsNotNone(target)
+            assert target is not None
+            value = json.loads(target.read_text(encoding="utf-8"))
+
+        self.assertEqual(value["provider"], "github")
+        self.assertEqual(value["default_visibility"], "private")
+        self.assertFalse(value["allow_force_push"])
+        self.assertFalse(value["store_raw_transcripts"])
+        self.assertNotIn("token", value)
+        self.assertNotIn("password", value)
+
+    def test_source_guard_requires_valid_owner_when_enabled(self) -> None:
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.base / "codex-home-invalid")}):
+            with self.assertRaises(DEVICE.FleetError):
+                DEVICE.source_control_config("invalid owner", True)
 
 
 if __name__ == "__main__":

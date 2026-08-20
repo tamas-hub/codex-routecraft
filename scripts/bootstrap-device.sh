@@ -9,6 +9,8 @@ MEMORY_DIR="$HOME/routecraft-memory"
 ALLOW_FIRST_DEVICE=0
 JSON_OUTPUT=0
 MEMORY_REMOTE=""
+GITHUB_OWNER=""
+ENABLE_PROJECT_SOURCE_GUARD=0
 
 usage() {
   cat <<'EOF'
@@ -20,6 +22,8 @@ Options:
   --memory-branch NAME
   --source-dir PATH
   --memory-dir PATH
+  --enable-project-source-guard
+  --github-owner OWNER
   --allow-first-device
   --json
 EOF
@@ -33,6 +37,8 @@ while [ "$#" -gt 0 ]; do
     --memory-branch) MEMORY_BRANCH=$2; shift 2 ;;
     --source-dir) SOURCE_DIR=$2; shift 2 ;;
     --memory-dir) MEMORY_DIR=$2; shift 2 ;;
+    --enable-project-source-guard) ENABLE_PROJECT_SOURCE_GUARD=1; shift ;;
+    --github-owner) GITHUB_OWNER=$2; shift 2 ;;
     --allow-first-device) ALLOW_FIRST_DEVICE=1; shift ;;
     --json) JSON_OUTPUT=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -79,6 +85,10 @@ if [ "$ALLOW_FIRST_DEVICE" = "1" ]; then
 fi
 if [ "$JSON_OUTPUT" = "1" ]; then
   set -- "$@" --json
+fi
+if [ "$ENABLE_PROJECT_SOURCE_GUARD" = "1" ]; then
+  [ -n "$GITHUB_OWNER" ] || { echo "--github-owner is required with --enable-project-source-guard" >&2; exit 2; }
+  set -- "$@" --enable-project-source-guard --github-owner "$GITHUB_OWNER"
 fi
 
 python3 "$@"

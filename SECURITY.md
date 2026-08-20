@@ -2,6 +2,10 @@
 
 RouteCraft is orchestration guidance and configuration. It is not a sandbox, authorization layer, secret-management system, or complete data-loss-prevention system.
 
+## Source Guard boundary
+
+Source Guard reads Git metadata and hashes a local working-tree diff to detect whether the current task changed source. It does not stage, commit, push, create repositories, read transcript content, or copy file contents into its local state. The state and `source-control.json` remain device-local. Private repository creation and the final commit/push are performed by Codex under the configured standing policy only after diff, secret, ownership, and verification checks.
+
 ## Security-sensitive routing
 
 Changes involving authentication, authorization, secrets, cryptography, payments, personal/regulated data, destructive migrations, or recovery logic should normally use a stronger implementation lane and fresh Sol review.

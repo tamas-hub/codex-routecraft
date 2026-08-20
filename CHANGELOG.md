@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-08-20
 
 - Added an idempotent multi-device bootstrap for Windows and macOS.
 - Standardized RouteCraft source at `~/codex-routecraft` and private decision memory at `~/routecraft-memory`.
 - Added a shared non-secret fleet configuration inside the tracked Decision Store sentinel.
 - Added device-local profiles under `~/.codex/routecraft/` while keeping credentials, absolute paths, plugin cache, and generated agent files local.
 - Added cross-platform tests, bootstrap syntax checks, and English/Japanese fleet-operation guides.
+- Added an opt-in Source Guard for every Codex task on a managed device.
+- Injected a private-by-default GitHub source-of-truth policy at session start and added a Stop gate for task-created uncommitted or unpushed source changes.
+- Kept raw transcripts, credentials, databases, uploads, caches, and device-local configuration outside project repositories.
+- Added local per-device Source Guard configuration and safe baseline fingerprints that preserve pre-existing dirty work.
 
 ## 0.3.2 - 2026-08-19
 

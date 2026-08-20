@@ -13,7 +13,7 @@ MEMORY = PLUGIN / "intelligence"
 MEMORY_SCRIPT = PLUGIN / "scripts" / "routecraft_memory.py"
 MEMORY_PACKAGE = PLUGIN / "scripts" / "routecraft_memory_lib"
 
-EXPECTED_VERSION = "0.3.2"
+EXPECTED_VERSION = "0.4.0"
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
@@ -79,10 +79,13 @@ required_files = [
     ROOT / "docs" / "PERSISTENT_DECISION_LAYER.ja.md",
     ROOT / "tests" / "test_routecraft_memory.py",
     ROOT / "tests" / "test_routecraft_git_privacy.py",
+    ROOT / "tests" / "test_routecraft_source_guard.py",
     ROOT / "tests" / "test_routecraft_stdin_utf8.py",
     ROOT / "README.md",
     ROOT / "README.ja.md",
     ROOT / "LICENSE",
+    PLUGIN / "hooks" / "hooks.json",
+    PLUGIN / "scripts" / "routecraft_source_guard.py",
 ]
 for required in required_files:
     if not required.is_file():
@@ -107,7 +110,7 @@ if manifest.get("version") != EXPECTED_VERSION:
 if manifest.get("skills") != "./skills/":
     fail("plugin.json skills must be ./skills/")
 keywords = set(manifest.get("keywords", [])) if isinstance(manifest.get("keywords"), list) else set()
-for keyword in {"persistent-memory", "decision-retrieval", "cross-device"}:
+for keyword in {"persistent-memory", "decision-retrieval", "cross-device", "github-source-of-truth"}:
     if keyword not in keywords:
         fail(f"plugin.json missing keyword: {keyword}")
 
@@ -188,7 +191,9 @@ for template_name, kind in [("case.md", "case"), ("candidate.md", "candidate"), 
             fail(f"{path.relative_to(ROOT)} missing template term: {term}")
 
 memory_python_files = [MEMORY_SCRIPT, *sorted(MEMORY_PACKAGE.glob("*.py"))]
-for path in memory_python_files:
+source_guard_script = PLUGIN / "scripts" / "routecraft_source_guard.py"
+python_files = [*memory_python_files, source_guard_script]
+for path in python_files:
     if not path.is_file():
         continue
     try:
@@ -214,6 +219,28 @@ for term in [
     if term not in implementation:
         fail(f"memory CLI package missing implementation term: {term}")
 
+hooks_path = PLUGIN / "hooks" / "hooks.json"
+hooks = load_json(hooks_path) if hooks_path.is_file() else {}
+hook_events = hooks.get("hooks", {}) if isinstance(hooks, dict) else {}
+for event in ("SessionStart", "Stop"):
+    if event not in hook_events:
+        fail(f"hooks.json missing Source Guard event: {event}")
+hook_text = json.dumps(hooks, ensure_ascii=False)
+for term in ["routecraft_source_guard.py", "CLAUDE_PLUGIN_ROOT", "commandWindows"]:
+    if term not in hook_text:
+        fail(f"hooks.json missing Source Guard contract text: {term}")
+if source_guard_script.is_file():
+    guard_text = source_guard_script.read_text(encoding="utf-8")
+    for term in [
+        "GITHUB SOURCE-OF-TRUTH POLICY",
+        "default_visibility",
+        "raw Codex transcripts",
+        "allow_force_push",
+        "decision\": \"block",
+    ]:
+        if term not in guard_text:
+            fail(f"Source Guard missing required contract text: {term}")
+
 for path in ROOT.rglob("*"):
     if path.is_file() and path.suffix.lower() in {
         ".md", ".json", ".toml", ".py", ".sh", ".ps1", ".yml", ".yaml"
@@ -234,4 +261,4 @@ print(f"- marketplace: {market.get('name')}")
 print(f"- agents: {len(EXPECTED_AGENTS)}")
 print("- orchestration contract: present")
 print("- persistent decision layer: present")
-print(f"- memory CLI: compiles ({len(memory_python_files)} modules)")
+print(f"- Python tools: compile ({len(python_files)} modules)")

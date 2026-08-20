@@ -6,6 +6,13 @@ RouteCraftは、**Solを設計・統合・最終判断に残し、実装だけ�
 
 **小さい仕事はSol単独。委譲するなら最安で完遂できるlane。並列化は独立作業だけ。最後は親Solがdiffとテストを確認。高リスク時だけFresh Solレビュー。仕事後は検証済み知見だけを外部知能へ残す。**
 
+## V0.4.0で追加されたもの
+
+- すべてのCodexタスクへprivate-by-defaultのGitHub原本ポリシーを渡すSource Guard
+- タスク開始前のdirty状態を保護し、今回生じた未commit／未pushだけをStop時に検出
+- raw transcript、`.env`、DB、upload、cache、端末設定をGitHub対象から除外
+- 3端末で共通実装を使い、GitHub ownerなどは端末ローカル設定として保持
+
 ## V0.3.0で追加されたもの
 
 - 作業前に関連Rule・Caseだけを検索する`recall`
@@ -88,6 +95,8 @@ python plugins/codex-routecraft/scripts/routecraft_memory.py init \
 ```
 
 詳細は[Persistent Decision Layer日本語ガイド](docs/PERSISTENT_DECISION_LAYER.ja.md)を参照してください。
+
+複数端末とSource Guardの導入は[複数端末フリート運用](docs/MULTI_DEVICE_FLEET.ja.md)を参照してください。
 
 ## 使い方
 

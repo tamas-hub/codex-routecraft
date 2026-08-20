@@ -392,6 +392,35 @@ def local_config(
     return target
 
 
+def source_control_config(github_owner: str | None, enabled: bool) -> Path | None:
+    target = codex_home() / "routecraft" / "source-control.json"
+    if not enabled:
+        return target if target.is_file() else None
+    owner = (github_owner or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})", owner):
+        raise FleetError("--github-owner is required and must be a valid GitHub owner when Source Guard is enabled")
+    write_json(
+        target,
+        {
+            "schema_version": 1,
+            "enabled": True,
+            "provider": "github",
+            "github_owner": owner,
+            "default_visibility": "private",
+            "auto_commit": True,
+            "auto_push": True,
+            "allow_force_push": False,
+            "store_raw_transcripts": False,
+            "store_device_config": False,
+        },
+    )
+    try:
+        target.chmod(0o600)
+    except OSError:
+        pass
+    return target
+
+
 def verify_state(
     source: Path,
     store: Path,
@@ -418,6 +447,18 @@ def verify_state(
     missing = [name for name in AGENTS if not (codex_home() / "agents" / name).is_file()]
     if missing:
         raise FleetError("Missing RouteCraft agents: " + ", ".join(missing))
+
+    source_control_path = codex_home() / "routecraft" / "source-control.json"
+    source_control = load_json(source_control_path) if source_control_path.is_file() else {}
+    if source_control and source_control.get("enabled") is True:
+        if source_control.get("provider") != "github":
+            raise FleetError("Source Guard provider must be github")
+        if source_control.get("default_visibility") != "private":
+            raise FleetError("Source Guard default visibility must be private")
+        if source_control.get("allow_force_push") is not False:
+            raise FleetError("Source Guard must not allow force push")
+        if source_control.get("store_raw_transcripts") is not False:
+            raise FleetError("Source Guard must not store raw transcripts")
 
     return {
         "plugin_version": version,
@@ -450,7 +491,15 @@ def verify_state(
             "counts": counts,
             "clean": not bool(git_text(store, "status", "--porcelain")),
         },
-        "codex": {"home": str(codex_home()), "plugin_cache": str(cache), "agents": len(AGENTS)},
+        "codex": {
+            "home": str(codex_home()),
+            "plugin_cache": str(cache),
+            "agents": len(AGENTS),
+            "source_guard": {
+                "enabled": source_control.get("enabled") is True,
+                "config": str(source_control_path) if source_control_path.is_file() else None,
+            },
+        },
     }
 
 
@@ -484,6 +533,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         version,
         status,
     )
+    source_control = source_control_config(args.github_owner, args.enable_project_source_guard)
     result = verify_state(source, store, args.source_branch, args.memory_branch, version)
     return {
         "ok": True,
@@ -491,6 +541,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, Any]:
         "fleet_config": fleet_action,
         "shared_config_path": str(store / ".routecraft-store.json"),
         "local_config_path": str(local),
+        "source_control_config_path": str(source_control) if source_control else None,
         "sync": sync,
         "plugin": plugin,
         **result,
@@ -524,6 +575,8 @@ def parser() -> argparse.ArgumentParser:
     setup.add_argument("--source-remote", default=SOURCE_REMOTE)
     setup.add_argument("--memory-remote", required=True)
     setup.add_argument("--allow-first-device", action="store_true")
+    setup.add_argument("--enable-project-source-guard", action="store_true")
+    setup.add_argument("--github-owner")
     setup.set_defaults(func=bootstrap)
 
     check = commands.add_parser("status", help="Verify the standardized local layout")

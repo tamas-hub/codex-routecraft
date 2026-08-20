@@ -7,6 +7,7 @@ This layout separates RouteCraft source, reusable decision intelligence, and dev
 - **GitHub is the source of truth for source code.** Local source checkouts are working copies.
 - **Shareable configuration and decision intelligence live in a private GitHub repository.**
 - **Absolute paths, device IDs, generated Codex cache, and credentials remain local.**
+- **Source Guard applies to every Codex session** and verifies commit/push completion only when a task changes durable project artifacts.
 - Bootstrap refuses to overwrite a RouteCraft source checkout that has local changes.
 - Never store credentials, private keys, personal data, raw logs, or full transcripts in the Decision Store.
 
@@ -17,6 +18,7 @@ This layout separates RouteCraft source, reusable decision intelligence, and dev
 | RouteCraft source | `~/codex-routecraft` | Working copy cloned from the public GitHub repository |
 | Decision Store | `~/routecraft-memory` | Private Git repository for Cases, Candidates, and Rules |
 | Device profile | `~/.codex/routecraft/device.json` | Device-local absolute paths, OS metadata, installed version |
+| Source Guard config | `~/.codex/routecraft/source-control.json` | GitHub owner, private default, and commit/push policy |
 | Memory config | `~/.codex/routecraft/memory.json` | Active store, device ID, and synchronization policy |
 | Agent profiles | `~/.codex/agents/routecraft_*.toml` | Generated from templates tracked in the public repository |
 | Plugin cache | `~/.codex/plugins/cache/...` | Generated locally by Codex |
@@ -53,6 +55,7 @@ The following remain local and are never committed to the Decision Store:
 - `device.json` and `memory.json`
 - Codex plugin cache
 - backups of installed agent profiles
+- Source Guard baseline fingerprints (Git-state hashes only, never transcript content)
 - cloned product repositories and build artifacts
 
 ## What bootstrap does
@@ -68,6 +71,7 @@ The following remain local and are never committed to the Decision Store:
 7. update the six RouteCraft agent profiles with timestamped backups;
 8. write the local `device.json` profile;
 9. verify source, memory, plugin, agent, and Git state.
+10. write local Source Guard configuration when explicitly enabled.
 
 Use `--allow-first-device` only when deliberately initializing an empty private Decision Store. Additional devices must not use it.
 
@@ -77,15 +81,31 @@ Use `--allow-first-device` only when deliberately initializing an empty private 
 Set-ExecutionPolicy -Scope Process Bypass
 
 & "$HOME\codex-routecraft\scripts\bootstrap-device.ps1" `
-  -MemoryRemote "https://github.com/OWNER/routecraft-memory-private.git"
+  -MemoryRemote "https://github.com/OWNER/routecraft-memory-private.git" `
+  -EnableProjectSourceGuard `
+  -GitHubOwner "OWNER"
 ```
 
 ## macOS
 
 ```sh
 sh "$HOME/codex-routecraft/scripts/bootstrap-device.sh" \
-  --memory-remote "https://github.com/OWNER/routecraft-memory-private.git"
+  --memory-remote "https://github.com/OWNER/routecraft-memory-private.git" \
+  --enable-project-source-guard \
+  --github-owner "OWNER"
 ```
+
+## Source Guard
+
+Source Guard does not blindly stage or push files from a hook. At session start it injects a standing source-of-truth policy and stores a device-local fingerprint of the Git state. At Stop it asks Codex to continue only when this task left durable source uncommitted or unpushed.
+
+- pre-existing dirty work is preserved as the baseline;
+- only task-owned safe files are staged after verification;
+- repositories without a remote default to a private repository under the configured GitHub owner;
+- force push is prohibited and divergence stops for review;
+- raw transcripts, `.env`, credentials, databases, uploads, caches, and device-local settings are excluded.
+
+Sessions that only answer questions or do not change durable files create no commit. Non-managed hooks require a one-time trust review on each device through `/hooks`, and changed hook definitions require review again.
 
 ## Codex-assisted installation
 

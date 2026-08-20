@@ -1,7 +1,7 @@
 {
   "name": "codex-routecraft",
-  "version": "0.3.2",
-  "description": "Sol-led adaptive Codex orchestration with cheapest-viable delegation, parent verification, and persistent decision memory across sessions and computers.",
+  "version": "0.4.0",
+  "description": "Sol-led adaptive Codex orchestration with verified source control, parent verification, and persistent decision memory across sessions and computers.",
   "author": {
     "name": "tamas-hub",
     "url": "https://github.com/tamas-hub"
@@ -18,7 +18,8 @@
     "cost-optimization",
     "persistent-memory",
     "decision-retrieval",
-    "cross-device"
+    "cross-device",
+    "github-source-of-truth"
   ],
   "skills": "./skills/",
   "interface": {

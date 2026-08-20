@@ -1,0 +1,33 @@
+{
+  "description": "Optional GitHub source-of-truth guard for RouteCraft-managed devices.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
+            "commandWindows": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
+            "statusMessage": "Checking GitHub source-of-truth policy",
+            "timeout": 10,
+            "additionalContextLimit": 6000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
+            "commandWindows": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
+            "statusMessage": "Confirming source is committed and pushed",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

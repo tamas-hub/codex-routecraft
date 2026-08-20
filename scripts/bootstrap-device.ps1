@@ -8,6 +8,8 @@ param(
     [string]$MemoryBranch = 'main',
     [string]$SourceDir = (Join-Path $HOME 'codex-routecraft'),
     [string]$MemoryDir = (Join-Path $HOME 'routecraft-memory'),
+    [string]$GitHubOwner,
+    [switch]$EnableProjectSourceGuard,
     [switch]$AllowFirstDevice,
     [switch]$Json
 )
@@ -91,6 +93,12 @@ $Arguments = @(
     '--memory-branch', $MemoryBranch
 )
 if ($AllowFirstDevice) { $Arguments += '--allow-first-device' }
+if ($EnableProjectSourceGuard) {
+    if ([string]::IsNullOrWhiteSpace($GitHubOwner)) {
+        throw '-GitHubOwner is required with -EnableProjectSourceGuard.'
+    }
+    $Arguments += @('--enable-project-source-guard', '--github-owner', $GitHubOwner)
+}
 if ($Json) { $Arguments += '--json' }
 
 Invoke-Python -Python $Python -Arguments $Arguments
