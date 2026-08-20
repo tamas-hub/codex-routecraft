@@ -139,6 +139,31 @@ class RouteCraftFleetTests(unittest.TestCase):
             with self.assertRaises(DEVICE.FleetError):
                 DEVICE.source_control_config("invalid owner", True)
 
+    def test_windows_codex_shim_resolves_to_packaged_native_executable(self) -> None:
+        npm = self.base / "npm"
+        shim = npm / "codex.cmd"
+        native = (
+            npm
+            / "node_modules"
+            / "@openai"
+            / "codex"
+            / "node_modules"
+            / "@openai"
+            / "codex-win32-x64"
+            / "vendor"
+            / "x86_64-pc-windows-msvc"
+            / "bin"
+            / "codex.exe"
+        )
+        native.parent.mkdir(parents=True)
+        shim.write_text("@echo off\n", encoding="utf-8")
+        native.write_bytes(b"native")
+
+        with mock.patch.object(DEVICE.os, "name", "nt"), mock.patch.object(
+            DEVICE.shutil, "which", return_value=str(shim)
+        ):
+            self.assertEqual(Path(DEVICE.resolve_codex_executable()), native.resolve())
+
 
 if __name__ == "__main__":
     unittest.main()

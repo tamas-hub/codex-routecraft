@@ -92,6 +92,30 @@ def require(name: str) -> None:
         raise FleetError(f"Required command not found: {name}")
 
 
+def resolve_codex_executable() -> str:
+    resolved = shutil.which("codex")
+    if not resolved:
+        raise FleetError("Required command not found: codex")
+    candidate = Path(resolved).resolve()
+    if os.name != "nt" or candidate.suffix.lower() == ".exe":
+        return str(candidate)
+
+    npm_package = candidate.parent / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai"
+    patterns = (
+        "codex-win32-*/vendor/*/bin/codex.exe",
+        "codex-win32-*/vendor/*/codex/codex.exe",
+    )
+    for pattern in patterns:
+        matches = sorted(npm_package.glob(pattern))
+        if matches:
+            return str(matches[-1].resolve())
+
+    native = shutil.which("codex.exe")
+    if native:
+        return str(Path(native).resolve())
+    raise FleetError("Codex resolves to a Windows script shim, but the native codex.exe was not found")
+
+
 def load_json(target: Path) -> dict[str, Any]:
     try:
         value = json.loads(target.read_text(encoding="utf-8"))
@@ -335,17 +359,17 @@ def install_agents() -> list[str]:
 
 
 def install_plugin(source: Path, version: str) -> dict[str, Any]:
-    require("codex")
-    run(("codex", "plugin", "remove", PLUGIN), check=False)
-    run(("codex", "plugin", "marketplace", "remove", MARKETPLACE), check=False)
+    codex = resolve_codex_executable()
+    run((codex, "plugin", "remove", PLUGIN), check=False)
+    run((codex, "plugin", "marketplace", "remove", MARKETPLACE), check=False)
     cache_root = codex_home() / "plugins" / "cache" / MARKETPLACE / "codex-routecraft"
     backup = None
     if cache_root.exists():
         backup_path = cache_root.with_name(cache_root.name + ".bak." + stamp())
         cache_root.replace(backup_path)
         backup = str(backup_path)
-    run(("codex", "plugin", "marketplace", "add", str(source)))
-    run(("codex", "plugin", "add", PLUGIN))
+    run((codex, "plugin", "marketplace", "add", str(source)))
+    run((codex, "plugin", "add", PLUGIN))
     changed = install_agents()
     expected = cache_root / version
     if not expected.is_dir():

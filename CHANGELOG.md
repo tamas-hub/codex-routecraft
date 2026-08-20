@@ -11,6 +11,7 @@
 - Injected a private-by-default GitHub source-of-truth policy at session start and added a Stop gate for task-created uncommitted or unpushed source changes.
 - Kept raw transcripts, credentials, databases, uploads, caches, and device-local configuration outside project repositories.
 - Added local per-device Source Guard configuration and safe baseline fingerprints that preserve pre-existing dirty work.
+- Made Windows bootstrap resolve the packaged native `codex.exe` instead of launching an npm CMD shim through Python.
 
 ## 0.3.2 - 2026-08-19
 
