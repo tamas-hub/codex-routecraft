@@ -15,7 +15,7 @@ MEMORY_PACKAGE = PLUGIN / "scripts" / "routecraft_memory_lib"
 EVALUATION_SCRIPT = PLUGIN / "scripts" / "routecraft_evaluation.py"
 OBSERVATORY_SCRIPT = PLUGIN / "scripts" / "routecraft_observatory.py"
 
-EXPECTED_VERSION = "0.5.0"
+EXPECTED_VERSION = "0.5.1+codex.20260820081910"
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
@@ -72,6 +72,9 @@ required_files = [
     MEMORY_SCRIPT,
     EVALUATION_SCRIPT,
     OBSERVATORY_SCRIPT,
+    PLUGIN / "scripts" / "routecraft_observatory_tray.ps1",
+    PLUGIN / "scripts" / "install-observatory-tray.ps1",
+    PLUGIN / "scripts" / "uninstall-observatory-tray.ps1",
     MEMORY_PACKAGE / "__init__.py",
     MEMORY_PACKAGE / "common.py",
     MEMORY_PACKAGE / "search.py",
@@ -89,6 +92,7 @@ required_files = [
     ROOT / "tests" / "test_routecraft_evaluation.py",
     ROOT / "tests" / "test_routecraft_git_privacy.py",
     ROOT / "tests" / "test_routecraft_observatory.py",
+    ROOT / "tests" / "test_observatory_tray.py",
     ROOT / "tests" / "test_routecraft_source_guard.py",
     ROOT / "tests" / "test_routecraft_stdin_utf8.py",
     ROOT / "README.md",

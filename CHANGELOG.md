@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1
+
+- Add a windowless Windows notification-area host for Observatory heartbeat.
+- Show ON, OFF, and delivery-error state through a small colored tray icon and context menu.
+- Start the long-lived tray host once at user sign-in instead of launching a scheduled process every five minutes.
+- Add explicit install/uninstall scripts and a contract that heartbeat persistence requires user permission.
+
 ## 0.5.0 - 2026-08-20
 
 - Added an opt-in local RouteCraft Memory effectiveness evaluator.

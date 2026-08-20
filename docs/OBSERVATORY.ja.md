@@ -18,7 +18,7 @@ Mac #3     ─┤
 └─ ~/.codex
 ```
 
-Web画面は15秒ごと、端末heartbeatは5分ごとの更新を標準とします。
+端末heartbeatは5分ごとの更新を標準とします。Windowsでは、5分ごとにプロセスを起動するスケジュールタスクを使わず、ログオン時に1回だけ起動するタスクトレイ常駐を使用します。
 
 ## 監視対象
 
@@ -64,6 +64,35 @@ python plugins/codex-routecraft/scripts/routecraft_observatory.py \
   --token-file ~/.codex/routecraft/observatory/token \
   --alias Mac-1
 ```
+
+### Windowsの完全バックグラウンド運用
+
+常駐の導入は、利用者が端末・送信先・間隔を明示的に許可した場合だけ行います。通常のプラグイン導入や更新では、自動起動や定期heartbeatを勝手に登録しません。
+
+```powershell
+pwsh -NoProfile -File plugins/codex-routecraft/scripts/install-observatory-tray.ps1 `
+  -Endpoint https://example.com/routecraft/api/heartbeat.php `
+  -TokenFile "$HOME/.codex/routecraft/observatory/token" `
+  -Alias 'Windows #1' `
+  -IntervalSeconds 300
+```
+
+このインストーラーは次の構成だけを作ります。
+
+- ログオン時にトレイ常駐を1回起動するユーザー別スタートアップ登録
+- 緑＝ON、灰＝OFF、橙＝送信エラーのタスクトレイアイコン
+- 右クリックからのON/OFF、今すぐ送信、Observatory表示、常駐終了
+- heartbeat子プロセスの`CreateNoWindow`＋非表示起動
+
+**Windowsスケジュールタスクは作成しません。** ON/OFF状態は端末ローカルに保存され、OFFのまま再ログオンした場合も勝手にONへ戻りません。
+
+停止して自動起動だけを解除する場合：
+
+```powershell
+pwsh -NoProfile -File plugins/codex-routecraft/scripts/uninstall-observatory-tray.ps1
+```
+
+この解除処理はトークン、設定、コピー済みファイルを削除しません。必要なら再導入できる状態で保持します。
 
 ## GitHub Pages mode
 

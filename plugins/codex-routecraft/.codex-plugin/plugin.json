@@ -1,6 +1,6 @@
 {
   "name": "codex-routecraft",
-  "version": "0.5.0",
+  "version": "0.5.1+codex.20260820081910",
   "description": "Sol-led adaptive Codex orchestration with verified source control, parent verification, persistent decision memory, and opt-in effectiveness measurement across sessions and computers.",
   "author": {
     "name": "tamas-hub",

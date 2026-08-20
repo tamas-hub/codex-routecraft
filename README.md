@@ -4,6 +4,8 @@
 
 RouteCraft is a Codex plugin/skill for software-delivery orchestration across the GPT-5.6 family. The primary Sol session owns architecture and acceptance. Bounded implementation can move to Luna, judgment-heavy implementation can move to Terra, and high-risk changes can receive a fresh Sol review.
 
+V0.5.1 adds an explicitly opt-in, windowless Windows notification-area host for Observatory heartbeat. It starts once at sign-in, sends from the long-lived background process, and shows green ON, gray OFF, or orange delivery-error state in a small tray icon. It does not create a five-minute Scheduled Task, and the tray context menu provides pause/resume and send-now controls.
+
 V0.4.0 adds an opt-in, private-by-default Source Guard for every Codex task on a managed device. It preserves pre-existing dirty work, injects the GitHub source-of-truth policy at session start, and prevents a task from stopping while its own durable source changes remain uncommitted or unpushed. Raw transcripts, credentials, `.env` files, databases, uploads, caches, and device-local configuration remain local. See [multi-device fleet operations](docs/MULTI_DEVICE_FLEET.md) for setup and the one-time hook trust review required on each device.
 
 V0.3.0 adds a Persistent Decision Layer:
@@ -15,7 +17,7 @@ V0.3.0 adds a Persistent Decision Layer:
 
 The goal is not "use more agents" or "store more text." The goal is **use the cheapest credible lane and avoid paying the same search/reasoning cost twice**.
 
-> Status: v0.4.0. Codex multi-agent APIs are evolving; RouteCraft is capability-aware and fails conservatively when a requested model/effort lane cannot be selected or verified.
+> Status: v0.5.1. Codex multi-agent APIs are evolving; RouteCraft is capability-aware and fails conservatively when a requested model/effort lane cannot be selected or verified.
 
 ## Architecture
 
