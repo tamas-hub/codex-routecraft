@@ -15,7 +15,7 @@ MEMORY_PACKAGE = PLUGIN / "scripts" / "routecraft_memory_lib"
 EVALUATION_SCRIPT = PLUGIN / "scripts" / "routecraft_evaluation.py"
 OBSERVATORY_SCRIPT = PLUGIN / "scripts" / "routecraft_observatory.py"
 
-EXPECTED_VERSION = "0.5.1+codex.20260820081910"
+EXPECTED_VERSION = "0.5.1+codex.20260822231609"
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
