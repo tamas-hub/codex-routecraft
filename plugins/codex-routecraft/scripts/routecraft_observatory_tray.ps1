@@ -178,6 +178,16 @@ function Start-Heartbeat {
                 throw "必要なファイルがありません: $requiredPath"
             }
         }
+        if ($config.telemetry_endpoint) {
+            foreach ($requiredPath in @($config.telemetry_script, $config.telemetry_token_file)) {
+                if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                    throw "テレメトリに必要なファイルがありません: $requiredPath"
+                }
+            }
+            if ($config.telemetry_sites_bypass_token_file -and -not (Test-Path -LiteralPath $config.telemetry_sites_bypass_token_file -PathType Leaf)) {
+                throw "Sites認証ファイルがありません: $($config.telemetry_sites_bypass_token_file)"
+            }
+        }
 
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
         $startInfo.FileName = $config.python_executable
@@ -194,6 +204,23 @@ function Start-Heartbeat {
         if ($config.alias) {
             [void]$startInfo.ArgumentList.Add('--alias')
             [void]$startInfo.ArgumentList.Add($config.alias)
+        }
+        if ($config.telemetry_endpoint) {
+            [void]$startInfo.ArgumentList.Add('--telemetry-endpoint')
+            [void]$startInfo.ArgumentList.Add($config.telemetry_endpoint)
+            [void]$startInfo.ArgumentList.Add('--telemetry-token-file')
+            [void]$startInfo.ArgumentList.Add($config.telemetry_token_file)
+            [void]$startInfo.ArgumentList.Add('--telemetry-script')
+            [void]$startInfo.ArgumentList.Add($config.telemetry_script)
+            [void]$startInfo.ArgumentList.Add('--telemetry-since-days')
+            [void]$startInfo.ArgumentList.Add([string]$config.telemetry_since_days)
+            if ($config.telemetry_sites_bypass_token_file) {
+                [void]$startInfo.ArgumentList.Add('--telemetry-sites-bypass-token-file')
+                [void]$startInfo.ArgumentList.Add($config.telemetry_sites_bypass_token_file)
+            }
+            if ($config.telemetry_include_legacy) {
+                [void]$startInfo.ArgumentList.Add('--telemetry-include-legacy')
+            }
         }
 
         $script:heartbeatProcess = [System.Diagnostics.Process]::new()

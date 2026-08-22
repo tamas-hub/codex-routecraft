@@ -26,6 +26,8 @@ class ObservatoryTrayContractTests(unittest.TestCase):
             "Set-HeartbeatEnabled",
             "RouteCraftObservatoryTrayEnable",
             "RouteCraftObservatoryTrayDisable",
+            "--telemetry-endpoint",
+            "--telemetry-sites-bypass-token-file",
         ):
             self.assertIn(term, text)
 
@@ -35,6 +37,8 @@ class ObservatoryTrayContractTests(unittest.TestCase):
         self.assertIn("start-hidden.vbs", text)
         self.assertIn("-WindowStyle Hidden", text)
         self.assertIn("scheduled_task_created = $false", text)
+        self.assertIn("routecraft_telemetry.py", text)
+        self.assertIn("TelemetrySitesBypassTokenFile", text)
         forbidden = ("Register-ScheduledTask", "New-ScheduledTask", "schtasks.exe", "schtasks ")
         self.assertFalse(any(term in text for term in forbidden))
 

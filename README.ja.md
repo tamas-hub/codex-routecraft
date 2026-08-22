@@ -137,6 +137,28 @@ Store管理だけを行う場合は、次のskillも利用できます。
 Use $codex-routecraft:memory to inspect, validate, recall, or synchronize my private RouteCraft decision store.
 ```
 
+## 指示時と実動のテレメトリ
+
+`routecraft_telemetry.py`は、Codexのローカルrolloutから、**人間がタスクを開始した親モデル／推論レベル → 実際に動いた子モデル／推論レベル**を対応付けます。実行回数、入力、cache入力、出力、推論出力、総トークン、経過時間も収集します。
+
+会話本文、作業ディレクトリ、ファイル名、Agentのtask path、raw session IDは出力しません。端末ID、親子session IDは端末固有saltでハッシュ化します。
+
+ローカル確認：
+
+```sh
+python plugins/codex-routecraft/scripts/routecraft_telemetry.py --print
+```
+
+旧Orchestratorの履歴も一度だけ取り込む場合：
+
+```sh
+python plugins/codex-routecraft/scripts/routecraft_telemetry.py \
+  --include-legacy --since-days 0 --output routecraft-telemetry.json
+```
+
+HTTPS endpointへ送信する場合は、32文字以上のBearer tokenを別ファイルに保存して`--endpoint`と`--token-file`を指定します。既定は直近30日で、旧Orchestratorのroleは除外します。
+非公開GPT Sitesの入口認証を併用する場合は、収集API用tokenとは別のSites bypass tokenファイルを`--sites-bypass-token-file`で指定できます。既存のObservatoryトレイへ組み込む場合は、installerの`TelemetryEndpoint`、`TelemetryTokenFile`、`TelemetrySitesBypassTokenFile`を使います。トレイをOFFにするとHeartbeatとテレメトリの両方が停止し、OFF状態は再インストール後も維持されます。
+
 ### Recall
 
 ```sh
@@ -222,6 +244,7 @@ RouteCraftはsecurity boundaryではありません。ただしmemory CLIと評�
 - Evaluation Eventへraw prompt / query / transcript / source code / credentials /絶対ユーザーパスを保存しない
 - Evaluation EventはDecision Storeへ同期せず端末ローカルに保持
 - Observatoryへは評価集計値のみ送信
+- 実行テレメトリへはハッシュ化した親子run、role、model、effort、時刻、token集計だけを送信し、会話本文・作業path・ファイル名・raw session IDを含めない
 
 ## License
 

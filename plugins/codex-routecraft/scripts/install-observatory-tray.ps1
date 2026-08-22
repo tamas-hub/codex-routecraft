@@ -15,23 +15,55 @@ param(
     [ValidatePattern('^https://')]
     [string]$DashboardUrl = 'https://tama-hub.xvps.jp/observatory/',
 
+    [ValidatePattern('^https://')]
+    [string]$TelemetryEndpoint,
+
+    [string]$TelemetryTokenFile,
+
+    [string]$TelemetrySitesBypassTokenFile,
+
+    [ValidateRange(1, 3650)]
+    [int]$TelemetrySinceDays = 30,
+
+    [switch]$TelemetryIncludeLegacy,
+
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'RouteCraft Observatory Tray')
 )
 
 $ErrorActionPreference = 'Stop'
 $traySource = Join-Path $PSScriptRoot 'routecraft_observatory_tray.ps1'
 $heartbeatSource = Join-Path $PSScriptRoot 'routecraft_observatory.py'
+$telemetrySource = Join-Path $PSScriptRoot 'routecraft_telemetry.py'
 
-foreach ($source in @($traySource, $heartbeatSource)) {
+foreach ($source in @($traySource, $heartbeatSource, $telemetrySource)) {
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
         throw "インストール元ファイルがありません: $source"
     }
+}
+
+if (($TelemetryEndpoint -and -not $TelemetryTokenFile) -or ($TelemetryTokenFile -and -not $TelemetryEndpoint)) {
+    throw 'TelemetryEndpointとTelemetryTokenFileは一緒に指定してください。'
 }
 
 $resolvedTokenFile = (Resolve-Path -LiteralPath $TokenFile).Path
 $tokenLength = (Get-Content -Raw -LiteralPath $resolvedTokenFile).Trim().Length
 if ($tokenLength -lt 32) {
     throw 'Heartbeat tokenが短すぎます。'
+}
+
+$resolvedTelemetryTokenFile = $null
+$resolvedSitesBypassTokenFile = $null
+if ($TelemetryEndpoint) {
+    $resolvedTelemetryTokenFile = (Resolve-Path -LiteralPath $TelemetryTokenFile).Path
+    if ((Get-Content -Raw -LiteralPath $resolvedTelemetryTokenFile).Trim().Length -lt 32) {
+        throw 'Telemetry tokenが短すぎます。'
+    }
+    if ($TelemetrySitesBypassTokenFile) {
+        $resolvedSitesBypassTokenFile = (Resolve-Path -LiteralPath $TelemetrySitesBypassTokenFile).Path
+        if ((Get-Content -Raw -LiteralPath $resolvedSitesBypassTokenFile).Trim().Length -lt 32) {
+            throw 'Sites bypass tokenが短すぎます。'
+        }
+    }
 }
 
 $pythonCommand = Get-Command python -ErrorAction Stop
@@ -51,6 +83,7 @@ if (-not (Test-Path -LiteralPath $installDirectory)) {
 }
 $trayDestination = Join-Path $installDirectory 'routecraft_observatory_tray.ps1'
 $heartbeatDestination = Join-Path $installDirectory 'routecraft_observatory.py'
+$telemetryDestination = Join-Path $installDirectory 'routecraft_telemetry.py'
 $configPath = Join-Path $installDirectory 'observatory-tray.json'
 $launcherPath = Join-Path $installDirectory 'start-hidden.vbs'
 
@@ -64,6 +97,7 @@ for ($attempt = 0; $attempt -lt 40; $attempt++) {
 
 Copy-Item -LiteralPath $traySource -Destination $trayDestination -Force
 Copy-Item -LiteralPath $heartbeatSource -Destination $heartbeatDestination -Force
+Copy-Item -LiteralPath $telemetrySource -Destination $telemetryDestination -Force
 
 $enabled = $true
 if (Test-Path -LiteralPath $configPath -PathType Leaf) {
@@ -77,7 +111,7 @@ if (Test-Path -LiteralPath $configPath -PathType Leaf) {
 }
 
 $config = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     endpoint = $Endpoint
     token_file = $resolvedTokenFile
     alias = $Alias
@@ -86,6 +120,22 @@ $config = [ordered]@{
     python_executable = $pythonExecutable
     heartbeat_script = $heartbeatDestination
     enabled = $enabled
+}
+if ($TelemetryEndpoint) {
+    $config.telemetry_endpoint = $TelemetryEndpoint
+    $config.telemetry_token_file = $resolvedTelemetryTokenFile
+    $config.telemetry_sites_bypass_token_file = $resolvedSitesBypassTokenFile
+    $config.telemetry_script = $telemetryDestination
+    $config.telemetry_since_days = $TelemetrySinceDays
+    $config.telemetry_include_legacy = [bool]$TelemetryIncludeLegacy
+}
+elseif ($previousConfig -and $previousConfig.telemetry_endpoint) {
+    $config.telemetry_endpoint = [string]$previousConfig.telemetry_endpoint
+    $config.telemetry_token_file = [string]$previousConfig.telemetry_token_file
+    $config.telemetry_sites_bypass_token_file = [string]$previousConfig.telemetry_sites_bypass_token_file
+    $config.telemetry_script = $telemetryDestination
+    $config.telemetry_since_days = [int]$previousConfig.telemetry_since_days
+    $config.telemetry_include_legacy = [bool]$previousConfig.telemetry_include_legacy
 }
 $config | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding utf8
 

@@ -97,11 +97,52 @@ def send(endpoint: str, token: str, payload: dict) -> dict:
     req=urllib.request.Request(endpoint,data=body,headers={"Content-Type":"application/json","Authorization":"Bearer "+token,"User-Agent":"RouteCraft-Observatory/2"},method="POST")
     with urllib.request.urlopen(req,timeout=15) as r:return json.loads(r.read().decode("utf-8"))
 
+def send_telemetry(args: argparse.Namespace) -> dict:
+    command = [
+        sys.executable,
+        str(Path(args.telemetry_script).expanduser()),
+        "--endpoint",
+        args.telemetry_endpoint,
+        "--token-file",
+        str(Path(args.telemetry_token_file).expanduser()),
+        "--since-days",
+        str(args.telemetry_since_days),
+    ]
+    if args.telemetry_sites_bypass_token_file:
+        command.extend(["--sites-bypass-token-file", str(Path(args.telemetry_sites_bypass_token_file).expanduser())])
+    if args.telemetry_include_legacy:
+        command.append("--include-legacy")
+    process = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if process.returncode != 0:
+        detail = process.stderr.strip()[:240] or f"exit code {process.returncode}"
+        raise RuntimeError(f"telemetry upload failed: {detail}")
+    lines = [line for line in process.stdout.splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError("telemetry upload returned no result")
+    result = json.loads(lines[-1])
+    if not isinstance(result, dict) or not result.get("ok"):
+        raise RuntimeError("telemetry upload returned an invalid result")
+    return result
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--endpoint")
     ap.add_argument("--token-file")
     ap.add_argument("--alias")
+    ap.add_argument("--telemetry-endpoint")
+    ap.add_argument("--telemetry-token-file")
+    ap.add_argument("--telemetry-sites-bypass-token-file")
+    ap.add_argument("--telemetry-script")
+    ap.add_argument("--telemetry-since-days", type=int, default=30)
+    ap.add_argument("--telemetry-include-legacy", action="store_true")
     ap.add_argument("--print",action="store_true",dest="print_only")
     a=ap.parse_args()
     p=build_payload(a.alias)
@@ -110,5 +151,10 @@ def main():
     if not a.token_file: raise SystemExit("--token-file is required with --endpoint")
     token=Path(a.token_file).expanduser().read_text(encoding="utf-8").strip()
     if len(token)<32: raise SystemExit("token is too short")
-    print(json.dumps(send(a.endpoint,token,p),ensure_ascii=False))
+    result = {"heartbeat": send(a.endpoint,token,p)}
+    if a.telemetry_endpoint:
+        if not a.telemetry_token_file or not a.telemetry_script:
+            raise SystemExit("--telemetry-token-file and --telemetry-script are required with --telemetry-endpoint")
+        result["telemetry"] = send_telemetry(a)
+    print(json.dumps(result,ensure_ascii=False))
 if __name__=="__main__": main()
