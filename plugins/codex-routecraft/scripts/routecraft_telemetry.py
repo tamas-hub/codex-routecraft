@@ -15,8 +15,25 @@ from pathlib import Path
 from typing import Any, Iterable
 
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9._+:/-]{1,80}$")
+SAFE_SUMMARY = re.compile(r"^[\w +＋・、。！？!?（）()【】「」：:\-]{1,80}$", re.UNICODE)
+FORBIDDEN_SUMMARY = re.compile(
+    r"(?:\b(?:api[_ -]?key|access[_ -]?token|token|secret|password|credential|private[_ -]?key)\b|\bkey\s*:|APIキー|トークン|秘密鍵|秘密|パスワード|認証情報|\b(?:CASE|CAND|RULE|EVAL)-[A-Z0-9-]+\b|\b[0-9a-f]{32,64}\b|\b[0-9a-f]{8}-[0-9a-f-]{27,36}\b|[A-Za-z]:[\\/]|/(?:Users|home)/)",
+    re.IGNORECASE,
+)
 LEGACY_ROLES = {"luna_light", "luna_max", "terra_worker", "reviewer"}
 BUILTIN_ROLES = {"default", "worker", "explorer"}
+TELEMETRY_SCHEMA_VERSION = 2
+VALID_TASK_CLASSES = {"general", "debugging", "implementation", "ci", "refactor", "docs", "release", "integration", "test"}
+VALID_MEMORY_MODES = {"off", "recall", "full"}
+VALID_LEARN_STATUSES = {"learned", "skipped"}
+VALID_SKIP_REASONS = {
+    "mode_off",
+    "mode_recall_only",
+    "no_reusable_learning",
+    "not_verified",
+    "store_unavailable",
+    "task_cancelled",
+}
 
 
 @dataclass(frozen=True)
@@ -116,6 +133,136 @@ def parse_time(value: str) -> datetime | None:
         return None
 
 
+def response_item_text(row: dict[str, Any]) -> str:
+    """Read only assistant response text; do not inspect user prompts or context."""
+    if row.get("type") != "response_item":
+        return ""
+    payload = row.get("payload")
+    if not isinstance(payload, dict) or payload.get("type") != "message":
+        return ""
+    if payload.get("role") != "assistant":
+        return ""
+    content = payload.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") not in {"text", "output_text"}:
+            continue
+        text = item.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def safe_task_summary(value: str) -> str | None:
+    candidate = value.strip()
+    if not SAFE_SUMMARY.fullmatch(candidate) or FORBIDDEN_SUMMARY.search(candidate):
+        return None
+    return candidate
+
+
+def parse_memory_marker(text: str) -> dict[str, Any] | None:
+    """Parse a bounded, explicit RouteCraft marker without exporting its text."""
+    lines = text.splitlines()
+    marker: dict[str, str] | None = None
+    for index, line in enumerate(lines):
+        if line.strip() != "ROUTECRAFT MEMORY":
+            continue
+        candidate: dict[str, str] = {}
+        for body_line in lines[index + 1:index + 10]:
+            if body_line.strip() == "END ROUTECRAFT MEMORY":
+                marker = candidate
+                break
+            if ":" not in body_line:
+                marker = None
+                break
+            key, value = body_line.split(":", 1)
+            key = key.strip()
+            if key in candidate:
+                marker = None
+                break
+            candidate[key] = value.strip()
+        if marker is not None:
+            break
+    if marker is None:
+        return None
+
+    required = {
+        "task_class",
+        "task_summary",
+        "memory_mode",
+        "memory_recall_count",
+        "memory_useful_count",
+        "memory_learn_status",
+    }
+    if not required.issubset(marker):
+        return None
+    task_class = marker["task_class"].lower()
+    task_summary = safe_task_summary(marker["task_summary"])
+    mode = marker["memory_mode"].lower()
+    learn_status = marker["memory_learn_status"].lower()
+    if task_class not in VALID_TASK_CLASSES or task_summary is None or mode not in VALID_MEMORY_MODES or learn_status not in VALID_LEARN_STATUSES:
+        return None
+    recall_text = marker["memory_recall_count"]
+    useful_text = marker["memory_useful_count"]
+    if not re.fullmatch(r"\d{1,4}", recall_text) or not re.fullmatch(r"\d{1,4}", useful_text):
+        return None
+    recall_count = int(recall_text)
+    useful_count = int(useful_text)
+    if useful_count > recall_count:
+        return None
+    skip_reason = marker.get("memory_skip_reason")
+    if mode == "off" and not (recall_count == useful_count == 0 and learn_status == "skipped" and skip_reason == "mode_off"):
+        return None
+    if mode == "recall" and not (learn_status == "skipped" and skip_reason == "mode_recall_only"):
+        return None
+    if mode == "full" and learn_status == "learned" and skip_reason is not None:
+        return None
+    if mode == "full" and learn_status == "skipped" and skip_reason not in {"no_reusable_learning", "not_verified", "store_unavailable", "task_cancelled"}:
+        return None
+    return {
+        "task_class": task_class,
+        "task_summary": task_summary,
+        "memory_mode": mode,
+        "memory_recall_count": recall_count,
+        "memory_useful_count": useful_count,
+        "memory_learn_status": learn_status,
+        "memory_skip_reason": skip_reason,
+    }
+
+
+def routecraft_memory_markers(path: Path) -> list[dict[str, Any]]:
+    """Return timestamped validated markers without retaining message text."""
+    markers: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                row = read_json_line(line)
+                if row is None:
+                    continue
+                parsed = parse_memory_marker(response_item_text(row))
+                completed = parse_time(str(row.get("timestamp") or ""))
+                if parsed is not None and completed is not None:
+                    markers.append({**parsed, "completed_at": completed.isoformat().replace("+00:00", "Z")})
+    except OSError:
+        pass
+    return sorted(markers, key=lambda item: str(item["completed_at"]))
+
+
+def marker_for_run(markers: list[dict[str, Any]], started_at: str) -> dict[str, Any] | None:
+    started = parse_time(started_at)
+    if started is None:
+        return None
+    for marker in markers:
+        completed = parse_time(str(marker.get("completed_at") or ""))
+        if completed is not None and completed >= started:
+            return {key: value for key, value in marker.items() if key != "completed_at"}
+    return None
+
+
 def has_routecraft_plan(path: Path, line_limit: int = 400) -> bool:
     """Detect only the exact declaration locally; never return message content."""
     try:
@@ -123,10 +270,8 @@ def has_routecraft_plan(path: Path, line_limit: int = 400) -> bool:
             for index, line in enumerate(handle):
                 if index >= line_limit:
                     break
-                if "ROUTECRAFT PLAN" not in line:
-                    continue
                 row = read_json_line(line)
-                if row and row.get("type") == "response_item":
+                if row and "ROUTECRAFT PLAN" in response_item_text(row):
                     return True
     except OSError:
         pass
@@ -193,6 +338,7 @@ def collect_runs(
     device_id = stable_hash("device", salt)
     parent_contexts: dict[str, dict[str, Any]] = {}
     parent_routecraft: dict[str, bool] = {}
+    parent_memory_markers: dict[str, list[dict[str, Any]]] = {}
     observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     runs: list[dict[str, Any]] = []
     for meta in sessions.values():
@@ -211,8 +357,23 @@ def collect_runs(
         if not usage or not ended_at:
             continue
         parent_context: dict[str, Any] = {}
+        memory_fields: dict[str, Any] = {
+            "task_class": None,
+            "task_summary": None,
+            "memory_mode": None,
+            "memory_recall_count": None,
+            "memory_useful_count": None,
+            "memory_learn_status": None,
+            "memory_skip_reason": None,
+        }
         if parent:
             parent_context = parent_contexts.setdefault(parent.session_id, first_context(parent.path))
+            marker = marker_for_run(
+                parent_memory_markers.setdefault(parent.session_id, routecraft_memory_markers(parent.path)),
+                meta.started_at,
+            )
+            if marker is not None:
+                memory_fields.update(marker)
         started = parse_time(meta.started_at)
         ended = parse_time(ended_at)
         duration_ms = max(0, int((ended - started).total_seconds() * 1000)) if started and ended else 0
@@ -240,8 +401,46 @@ def collect_runs(
             "reasoning_output_tokens": nonnegative_int(usage.get("reasoning_output_tokens")),
             "total_tokens": nonnegative_int(usage.get("total_tokens")),
             "observed_at": observed_at,
+            **memory_fields,
         })
     return sorted(runs, key=lambda item: item["started_at"], reverse=True)
+
+
+def collect_memory_tasks(
+    sessions_dir: Path,
+    codex_home: Path,
+    since_days: int | None,
+) -> list[dict[str, Any]]:
+    sessions = index_sessions(sessions_dir, since_days)
+    salt = device_salt(codex_home)
+    device_id = stable_hash("device", salt)
+    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    tasks: list[dict[str, Any]] = []
+    for meta in sessions.values():
+        if not has_routecraft_plan(meta.path):
+            continue
+        context = first_context(meta.path)
+        human_model = safe_label(context.get("model"), "") or None
+        human_effort = safe_label(context.get("effort") or context.get("reasoning_effort"), "") or None
+        for index, marker in enumerate(routecraft_memory_markers(meta.path)):
+            completed_at = str(marker["completed_at"])
+            tasks.append({
+                "task_run_id": stable_hash(f"task|{meta.session_id}|{completed_at}|{index}", salt),
+                "parent_run_id": stable_hash(meta.session_id, salt),
+                "device_id": device_id,
+                "human_model": human_model,
+                "human_effort": human_effort,
+                "task_class": marker["task_class"],
+                "task_summary": marker["task_summary"],
+                "memory_mode": marker["memory_mode"],
+                "memory_recall_count": marker["memory_recall_count"],
+                "memory_useful_count": marker["memory_useful_count"],
+                "memory_learn_status": marker["memory_learn_status"],
+                "memory_skip_reason": marker["memory_skip_reason"],
+                "completed_at": completed_at,
+                "observed_at": observed_at,
+            })
+    return sorted(tasks, key=lambda item: item["completed_at"], reverse=True)
 
 
 def batches(items: list[dict[str, Any]], size: int = 400) -> Iterable[list[dict[str, Any]]]:
@@ -249,16 +448,20 @@ def batches(items: list[dict[str, Any]], size: int = 400) -> Iterable[list[dict[
         yield items[index:index + size]
 
 
-def send(endpoint: str, token: str, runs: list[dict[str, Any]], sites_bypass_token: str | None = None) -> int:
+def send(endpoint: str, token: str, runs: list[dict[str, Any]], sites_bypass_token: str | None = None, memory_tasks: list[dict[str, Any]] | None = None) -> int:
     if not endpoint.startswith("https://") and not endpoint.startswith("http://localhost") and not endpoint.startswith("http://127.0.0.1"):
         raise ValueError("endpoint must use HTTPS unless it is localhost")
     accepted = 0
-    for group in batches(runs):
-        body = json.dumps({"schema_version": 1, "runs": group}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    run_groups = list(batches(runs))
+    task_groups = list(batches(memory_tasks or []))
+    for index in range(max(1, len(run_groups), len(task_groups))):
+        run_group = run_groups[index] if index < len(run_groups) else []
+        task_group = task_groups[index] if index < len(task_groups) else []
+        body = json.dumps({"schema_version": TELEMETRY_SCHEMA_VERSION, "runs": run_group, "memory_tasks": task_group}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "User-Agent": "RouteCraft-Telemetry/1",
+            "User-Agent": "RouteCraft-Telemetry/2",
         }
         if sites_bypass_token:
             headers["OAI-Sites-Authorization"] = f"Bearer {sites_bypass_token}"
@@ -267,7 +470,8 @@ def send(endpoint: str, token: str, runs: list[dict[str, Any]], sites_bypass_tok
             result = json.loads(response.read().decode("utf-8"))
         if not result.get("ok"):
             raise RuntimeError("telemetry endpoint rejected the batch")
-        accepted += nonnegative_int(result.get("accepted"))
+        accepted += nonnegative_int(result.get("accepted_runs", result.get("accepted")))
+        accepted += nonnegative_int(result.get("accepted_memory_tasks"))
     return accepted
 
 
@@ -288,7 +492,8 @@ def main() -> None:
     args = parser.parse_args()
     since_days = args.since_days if args.since_days > 0 else None
     runs = collect_runs(args.sessions_dir, args.codex_home, since_days, args.include_legacy, args.include_unclassified)
-    payload = {"schema_version": 1, "runs": runs}
+    memory_tasks = collect_memory_tasks(args.sessions_dir, args.codex_home, since_days)
+    payload = {"schema_version": TELEMETRY_SCHEMA_VERSION, "runs": runs, "memory_tasks": memory_tasks}
     if args.output:
         args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if args.print_payload:
@@ -304,10 +509,10 @@ def main() -> None:
             sites_bypass_token = args.sites_bypass_token_file.expanduser().read_text(encoding="utf-8").strip()
             if len(sites_bypass_token) < 32:
                 raise SystemExit("Sites bypass token is too short")
-        accepted = send(args.endpoint, token, runs, sites_bypass_token)
-        print(json.dumps({"ok": True, "collected": len(runs), "accepted": accepted}, separators=(",", ":")))
+        accepted = send(args.endpoint, token, runs, sites_bypass_token, memory_tasks)
+        print(json.dumps({"ok": True, "collected": len(runs), "collected_memory_tasks": len(memory_tasks), "accepted": accepted}, separators=(",", ":")))
     elif not args.print_payload:
-        print(json.dumps({"ok": True, "collected": len(runs), "output": bool(args.output)}, separators=(",", ":")))
+        print(json.dumps({"ok": True, "collected": len(runs), "collected_memory_tasks": len(memory_tasks), "output": bool(args.output)}, separators=(",", ":")))
 
 
 if __name__ == "__main__":

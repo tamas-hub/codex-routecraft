@@ -1,5 +1,5 @@
 {
-  "description": "Optional GitHub source-of-truth guard for RouteCraft-managed devices.",
+  "description": "RouteCraft lifecycle guard for GitHub source-of-truth and explicit Memory Loop closure.",
   "hooks": {
     "SessionStart": [
       {
@@ -9,7 +9,7 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
             "commandWindows": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
-            "statusMessage": "Checking GitHub source-of-truth policy",
+            "statusMessage": "Checking RouteCraft source and Memory policies",
             "timeout": 10,
             "additionalContextLimit": 6000
           }
@@ -23,7 +23,7 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
             "commandWindows": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
-            "statusMessage": "Confirming source is committed and pushed",
+            "statusMessage": "Confirming source sync and Memory Loop closure",
             "timeout": 10
           }
         ]

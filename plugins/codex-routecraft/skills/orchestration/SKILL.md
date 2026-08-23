@@ -54,11 +54,29 @@ When tracking is enabled, preserve the returned evaluation task ID and obey its 
 - `recall`: perform bounded recall, but skip learning/promotion from this task;
 - `full`: use normal recall plus verified post-task learning.
 
-After recall, record only returned record IDs and ranks. Never persist the raw query. After parent verification, classify recalled records as `useful`, `misleading`, `stale`, or leave them neutral. Record elapsed time and other counters only when they are observable; never invent tool-call counts, failed-hypothesis counts, or compression inputs to improve the score.
+Complete the explicit Memory Loop for every tracked task: `start` → bounded `recall` (record zero matches too) → post-verification usefulness judgment → manually `learn` or a finite skip reason → `finish`. Evaluation mode `off` records `mode_off` as the explicit skip reason and performs no persistent recall or learning; `recall` records `mode_recall_only`. In `full` mode, `finish` must name the learned record IDs or exactly one of `no_reusable_learning`, `not_verified`, `store_unavailable`, or `task_cancelled`.
+
+When local evaluation is enabled, the lifecycle hook links the open evaluator task to a one-way hash of the current Codex session. A first Stop with an unfinished task is blocked so the parent can close the loop; hook re-entry is not blocked again. The hook never recalls or learns automatically.
+
+After recall, record only returned record IDs and ranks. Never persist the raw query. After parent verification, classify recalled records as `useful`, `misleading`, `stale`, or leave them neutral. `routecraft_evaluation.py` records lifecycle status but never invokes learning itself; the parent decides whether verified evidence merits the separate `routecraft_memory.py learn` call. Record elapsed time and other counters only when they are observable; never invent tool-call counts, failed-hypothesis counts, or compression inputs to improve the score.
 
 Evaluation data is local-only by default and must not be synchronized through the Decision Store. It must not contain prompts, conversations, source code, raw logs, credentials, secrets, or absolute user paths.
 
 Evaluation does not change acceptance precedence. A good score never makes remembered guidance more authoritative than current evidence.
+
+At completion, emit this separate assistant-only marker when telemetry is enabled. Values must be finite categories from the evaluator and `task_summary` must be a deliberately written, privacy-safe summary of at most 80 characters; never copy the user prompt, query, paths, filenames, or secrets. The collector exports only this exact marker from the parent session and exports null memory fields when it is absent or invalid.
+
+```text
+ROUTECRAFT MEMORY
+task_class: implementation
+task_summary: Bounded memory loop validation
+memory_mode: full
+memory_recall_count: 2
+memory_useful_count: 1
+memory_learn_status: skipped
+memory_skip_reason: no_reusable_learning
+END ROUTECRAFT MEMORY
+```
 
 ## Declare the route before task tools
 

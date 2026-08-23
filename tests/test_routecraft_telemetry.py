@@ -27,7 +27,7 @@ def parent_rows(session_id: str) -> list[dict]:
     return [
         {"timestamp": "2026-08-23T00:00:00Z", "type": "session_meta", "payload": {"id": session_id, "source": "vscode"}},
         {"timestamp": "2026-08-23T00:00:01Z", "type": "turn_context", "payload": {"model": "gpt-5.6-sol", "effort": "high"}},
-        {"timestamp": "2026-08-23T00:00:02Z", "type": "response_item", "payload": {"type": "message", "content": "private prompt must never be exported"}},
+        {"timestamp": "2026-08-23T00:00:02Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": "private prompt must never be exported"}},
     ]
 
 
@@ -86,7 +86,7 @@ class RouteCraftTelemetryTests(unittest.TestCase):
             sessions = root / "sessions"
             codex_home = root / "codex"
             parent = parent_rows("parent")
-            parent.append({"timestamp": "2026-08-23T00:00:03Z", "type": "response_item", "payload": {"type": "message", "content": "ROUTECRAFT PLAN\nexecution: delegate"}})
+            parent.append({"timestamp": "2026-08-23T00:00:03Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": "ROUTECRAFT PLAN\nexecution: delegate"}})
             write_rollout(sessions / "parent.jsonl", parent)
             write_rollout(sessions / "child.jsonl", child_rows("child", "parent", None))
 
@@ -96,6 +96,157 @@ class RouteCraftTelemetryTests(unittest.TestCase):
             self.assertEqual(runs[0]["route_family"], "routecraft")
             self.assertEqual(runs[0]["role"], "subagent")
             self.assertNotIn("ROUTECRAFT PLAN", json.dumps(runs))
+
+    def test_exports_memory_fields_only_from_a_valid_explicit_parent_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "sessions"
+            codex_home = root / "codex"
+            parent = parent_rows("parent")
+            parent.append({
+                "timestamp": "2026-08-23T00:02:03Z",
+                "type": "response_item",
+                "payload": {"type": "message", "role": "assistant", "content": """ROUTECRAFT PLAN
+execution: delegate
+ROUTECRAFT MEMORY
+task_class: implementation
+task_summary: Add bounded memory loop metrics
+memory_mode: full
+memory_recall_count: 2
+memory_useful_count: 1
+memory_learn_status: skipped
+memory_skip_reason: no_reusable_learning
+END ROUTECRAFT MEMORY"""},
+            })
+            parent.append({
+                "timestamp": "2026-08-23T00:00:04Z",
+                "type": "response_item",
+                "payload": {"type": "message", "role": "user", "content": "ROUTECRAFT MEMORY\ntask_summary: C:/secret/project"},
+            })
+            write_rollout(sessions / "parent.jsonl", parent)
+            write_rollout(sessions / "child.jsonl", child_rows("child", "parent", None))
+
+            run = TELEMETRY.collect_runs(sessions, codex_home, None, include_legacy=False)[0]
+
+            self.assertEqual(run["task_class"], "implementation")
+            self.assertEqual(run["task_summary"], "Add bounded memory loop metrics")
+            self.assertEqual(run["memory_mode"], "full")
+            self.assertEqual(run["memory_recall_count"], 2)
+            self.assertEqual(run["memory_useful_count"], 1)
+            self.assertEqual(run["memory_learn_status"], "skipped")
+            self.assertEqual(run["memory_skip_reason"], "no_reusable_learning")
+            self.assertNotIn("C:/secret/project", json.dumps(run))
+
+    def test_missing_or_unsafe_marker_fields_remain_null(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "sessions"
+            codex_home = root / "codex"
+            parent = parent_rows("parent")
+            parent.append({
+                "timestamp": "2026-08-23T00:00:03Z",
+                "type": "response_item",
+                "payload": {"type": "message", "role": "assistant", "content": """ROUTECRAFT PLAN
+execution: delegate
+ROUTECRAFT MEMORY
+task_class: implementation
+task_summary: token: private-value
+memory_mode: full
+memory_recall_count: 1
+memory_useful_count: 0
+memory_learn_status: skipped
+memory_skip_reason: no_reusable_learning
+END ROUTECRAFT MEMORY"""},
+            })
+            write_rollout(sessions / "parent.jsonl", parent)
+            write_rollout(sessions / "child.jsonl", child_rows("child", "parent", None))
+
+            run = TELEMETRY.collect_runs(sessions, codex_home, None, include_legacy=False)[0]
+
+            for field in (
+                "task_class", "task_summary", "memory_mode", "memory_recall_count", "memory_useful_count",
+                "memory_learn_status", "memory_skip_reason",
+            ):
+                self.assertIsNone(run[field])
+
+    def test_marker_scan_reaches_late_explicit_marker_and_summary_validator_is_minimal(self) -> None:
+        self.assertEqual(
+            TELEMETRY.safe_task_summary("検証 ABC＋+・、。！？!?（）()【】「」：:-"),
+            "検証 ABC＋+・、。！？!?（）()【】「」：:-",
+        )
+        for unsafe in ("https://example.test", "name@example.test", "C:/secret", "key: private", "it's-private", "a&b"):
+            self.assertIsNone(TELEMETRY.safe_task_summary(unsafe))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "sessions"
+            codex_home = root / "codex"
+            parent = parent_rows("parent")
+            parent.append({"timestamp": "2026-08-23T00:00:03Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": "ROUTECRAFT PLAN\nexecution: delegate"}})
+            parent.extend(
+                {"timestamp": "2026-08-23T00:00:04Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": "ordinary assistant update"}}
+                for _ in range(801)
+            )
+            parent.append({
+                "timestamp": "2026-08-23T00:02:05Z",
+                "type": "response_item",
+                "payload": {"type": "message", "role": "assistant", "content": """ROUTECRAFT MEMORY
+task_class: test
+task_summary: Late marker validation
+memory_mode: recall
+memory_recall_count: 0
+memory_useful_count: 0
+memory_learn_status: skipped
+memory_skip_reason: mode_recall_only
+END ROUTECRAFT MEMORY"""},
+            })
+            write_rollout(sessions / "parent.jsonl", parent)
+            write_rollout(sessions / "child.jsonl", child_rows("child", "parent", None))
+
+            run = TELEMETRY.collect_runs(sessions, codex_home, None, include_legacy=False)[0]
+            self.assertEqual(run["task_summary"], "Late marker validation")
+            self.assertEqual(run["memory_skip_reason"], "mode_recall_only")
+            tasks = TELEMETRY.collect_memory_tasks(sessions, codex_home, None)
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["task_summary"], "Late marker validation")
+            self.assertNotIn('"parent"', json.dumps(tasks))
+
+    def test_multiple_parent_tasks_are_time_matched_and_solo_tasks_are_preserved(self) -> None:
+        def marker(summary: str, mode: str, reason: str) -> str:
+            return f"""ROUTECRAFT MEMORY
+task_class: integration
+task_summary: {summary}
+memory_mode: {mode}
+memory_recall_count: 0
+memory_useful_count: 0
+memory_learn_status: skipped
+memory_skip_reason: {reason}
+END ROUTECRAFT MEMORY"""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "sessions"
+            codex_home = root / "codex"
+            parent = parent_rows("parent")
+            parent.append({"timestamp": "2026-08-23T00:00:03Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": "ROUTECRAFT PLAN\nexecution: delegate"}})
+            parent.append({"timestamp": "2026-08-23T00:02:00Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": marker("First task", "recall", "mode_recall_only")}})
+            parent.append({"timestamp": "2026-08-23T00:04:00Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": marker("Second task", "full", "no_reusable_learning")}})
+            first = child_rows("child-1", "parent", "routecraft_luna_medium")
+            second = child_rows("child-2", "parent", "routecraft_terra_medium")
+            second[0]["timestamp"] = "2026-08-23T00:03:00Z"
+            second[1]["timestamp"] = "2026-08-23T00:03:01Z"
+            second[2]["timestamp"] = "2026-08-23T00:03:20Z"
+            write_rollout(sessions / "parent.jsonl", parent)
+            write_rollout(sessions / "child-1.jsonl", first)
+            write_rollout(sessions / "child-2.jsonl", second)
+
+            runs = TELEMETRY.collect_runs(sessions, codex_home, None, include_legacy=False)
+            by_role = {run["role"]: run for run in runs}
+            self.assertEqual(by_role["routecraft_luna_medium"]["task_summary"], "First task")
+            self.assertEqual(by_role["routecraft_terra_medium"]["task_summary"], "Second task")
+            tasks = TELEMETRY.collect_memory_tasks(sessions, codex_home, None)
+            self.assertEqual([task["task_summary"] for task in tasks], ["Second task", "First task"])
+            self.assertEqual(len({task["task_run_id"] for task in tasks}), 2)
 
     def test_non_https_remote_endpoint_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
@@ -115,6 +266,7 @@ class RouteCraftTelemetryTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("Authorization"), "Bearer " + "a" * 32)
         self.assertEqual(request.get_header("Oai-sites-authorization"), "Bearer " + "b" * 32)
+        self.assertEqual(json.loads(request.data.decode("utf-8"))["schema_version"], 2)
 
 
 if __name__ == "__main__":

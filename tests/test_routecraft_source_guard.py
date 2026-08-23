@@ -121,6 +121,29 @@ class RouteCraftSourceGuardTests(unittest.TestCase):
         (self.repo / "README.md").write_text("again\n", encoding="utf-8")
         self.assertEqual(GUARD.evaluate(self.event("Stop", active=True)), {})
 
+    def test_memory_loop_context_and_unfinished_stop_guard(self) -> None:
+        evaluation = GUARD.evaluation_dir()
+        evaluation.mkdir(parents=True)
+        (evaluation / "config.json").write_text(json.dumps({"enabled": True, "mode": "full"}), encoding="utf-8")
+        state = GUARD.evaluation_session_path("session-1")
+        state.parent.mkdir(parents=True)
+        state.write_text(json.dumps({"schema_version": 1, "task_id": "EVAL-TEST"}), encoding="utf-8")
+
+        context = GUARD.evaluate(self.event("SessionStart"))["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("ROUTECRAFT MEMORY LOOP", context)
+        self.assertIn("EVAL-TEST", context)
+        self.assertIn("task_cancelled", context)
+        blocked = GUARD.evaluate(self.event("Stop"))
+        self.assertEqual(blocked["decision"], "block")
+        self.assertIn("EVAL-TEST", blocked["reason"])
+        self.assertEqual(GUARD.evaluate(self.event("Stop", active=True)), {})
+
+        (evaluation / "events.jsonl").write_text(
+            json.dumps({"event": "task_finish", "task_id": "EVAL-TEST"}) + "\n", encoding="utf-8"
+        )
+        self.assertEqual(GUARD.evaluate(self.event("Stop")), {})
+        self.assertFalse(state.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

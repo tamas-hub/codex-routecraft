@@ -100,6 +100,8 @@ python plugins/codex-routecraft/scripts/routecraft_evaluation.py \
 
 Orchestration Skillから自動的に使うことを想定しています。
 
+任意のtask classは固定の評価分類へ正規化され、元の文字列は保存されません。評価が有効な場合、`start`はraw session IDではなく一方向ハッシュだけをkeyにしたローカルsidecarも開きます。
+
 開始:
 
 ```sh
@@ -151,6 +153,8 @@ python plugins/codex-routecraft/scripts/routecraft_evaluation.py \
 - 指定しないRecord: neutral / 実質的な影響なし。
 
 `tool_calls`、`failed_hypotheses`、文字数などは**観測できる時だけ**記録します。AIが推測して数字を作ることは禁止です。
+
+計測taskは必ず閉じます。`full`は検証済みの手動Learn後に`--learned-record`を指定するか、`no_reusable_learning` / `not_verified` / `store_unavailable` / `task_cancelled`のいずれかを`--skip-reason`へ指定します。`recall`は`mode_recall_only`、`off`は`mode_off`です。sidecarが開いたまま最初のStopへ進むとHookが継続を促しますが、Hook再入はblockせず、自動Learnもしません。次の`SessionStart`では以前のセッションに残った未完了taskをローカルID付きで通知し、検証後の完了または`task_cancelled`での明示終了を促します。
 
 ## Live指標
 

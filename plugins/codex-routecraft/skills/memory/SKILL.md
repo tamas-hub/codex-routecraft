@@ -29,6 +29,8 @@ After setup, run `status --json` and `validate`.
 
 Build a concise query from the task symptom, subsystem, framework/runtime, failure mode, and verification target. Use a small result limit and bounded character budget. Return the matched IDs and explain that they are prior evidence, not current proof.
 
+For a tracked task, the Memory Loop is explicit and local-only: call `routecraft_evaluation.py start`, then record exactly one bounded `recall` result (including zero matches), judge recalled records after verification, then either run `routecraft_memory.py learn` manually or give `finish` a finite skip reason. Never make a hook or telemetry collector learn automatically. The accepted reasons are `mode_off`, `mode_recall_only`, `no_reusable_learning`, `not_verified`, `store_unavailable`, and `task_cancelled`.
+
 ## Learn
 
 Accept only a structured case/candidate packet produced after verification. Prefer:
@@ -38,6 +40,8 @@ Accept only a structured case/candidate packet produced after verification. Pref
 - `reinforce_candidates` when a new independent case supports an existing candidate.
 
 Run with `--dry-run` first when the packet contains sensitive project context or broad scope. Report created IDs and promotion eligibility.
+
+When a learn call succeeds, pass only its created record IDs to `routecraft_evaluation.py finish --learned-record <ID>`. When no record should be created, finish with `--skip-reason <finite reason>` instead. Do not put the source packet, recall query, raw prompt, filesystem path, or secret into evaluation output or a telemetry marker.
 
 ## Promote
 

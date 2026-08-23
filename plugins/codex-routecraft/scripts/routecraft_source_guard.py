@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Advisory GitHub source-of-truth guard for Codex lifecycle hooks.
+"""RouteCraft lifecycle guard for Git source control and Memory Loop closure.
 
 The guard never stages, commits, pushes, creates repositories, or reads a
 transcript. It records a local Git fingerprint at SessionStart and asks Codex
-to continue at Stop only when the current task left source dirty or unpushed.
+to continue at Stop when source is dirty/unpushed or a measured Memory Loop is
+still open. It never learns records or reads a transcript.
 """
 from __future__ import annotations
 
@@ -89,6 +90,15 @@ def state_path(session_id: str) -> Path:
     return codex_home() / "routecraft" / "source-guard" / f"{session_key(session_id)}.json"
 
 
+def evaluation_dir() -> Path:
+    configured = os.environ.get("ROUTECRAFT_EVALUATION_DIR")
+    return Path(configured).expanduser().resolve() if configured else codex_home() / "routecraft" / "evaluation"
+
+
+def evaluation_session_path(session_id: str) -> Path:
+    return evaluation_dir() / "sessions" / f"{session_key(session_id)}.json"
+
+
 def write_state(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
@@ -132,6 +142,125 @@ def policy_text(config: Mapping[str, Any]) -> str:
         "never make a repository public without separate explicit approval. If pull/rebase, secret scanning, tests, repository "
         "identity, or a safe push cannot be completed, stop and report the exact blocker instead of claiming synchronization."
     )
+
+
+def memory_policy_text() -> str:
+    return (
+        "ROUTECRAFT MEMORY LOOP (local evaluation is enabled): start one measured task after intent is clear; "
+        "record exactly one bounded Recall result for recall/full mode; after verification, finish with learned record IDs "
+        "or one finite skip reason. Emit the privacy-safe ROUTECRAFT MEMORY marker required by the orchestration skill. "
+        "Never auto-learn from a transcript or store raw prompts, queries, paths, credentials, or raw session IDs."
+    )
+
+
+def unfinished_evaluation_tasks() -> list[str]:
+    finished: set[str] = set()
+    try:
+        with (evaluation_dir() / "events.jsonl").open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                task_id = str(item.get("task_id", "")).strip() if isinstance(item, dict) else ""
+                if task_id and item.get("event") == "task_finish":
+                    finished.add(task_id)
+    except OSError:
+        pass
+
+    open_tasks: set[str] = set()
+    sessions_dir = evaluation_dir() / "sessions"
+    try:
+        states = sessions_dir.glob("*.json")
+    except OSError:
+        states = []
+    for path in states:
+        task_id = str(load_json(path).get("task_id", "")).strip()
+        if task_id and task_id not in finished:
+            open_tasks.add(task_id)
+    return sorted(open_tasks)
+
+
+def memory_start() -> dict[str, Any]:
+    config = load_json(evaluation_dir() / "config.json")
+    if config.get("enabled") is not True:
+        return {}
+    context = memory_policy_text()
+    unfinished = unfinished_evaluation_tasks()
+    if unfinished:
+        preview = ", ".join(unfinished[:5])
+        remainder = f" (ほか{len(unfinished) - 5}件)" if len(unfinished) > 5 else ""
+        context += (
+            " Previous sessions left unfinished local evaluation tasks: "
+            f"{preview}{remainder}. Recover each task with finish after verification, or finish it as cancelled "
+            "with the finite task_cancelled skip reason; do not silently abandon it."
+        )
+    return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
+
+
+def memory_stop(event: Mapping[str, Any]) -> dict[str, Any]:
+    if event.get("stop_hook_active") is True:
+        return {}
+    session_id = str(event.get("session_id", "")).strip()
+    if not session_id:
+        return {}
+    target = evaluation_session_path(session_id)
+    state = load_json(target)
+    task_id = str(state.get("task_id", "")).strip()
+    if not task_id:
+        return {}
+    finished = False
+    try:
+        with (evaluation_dir() / "events.jsonl").open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(item, dict) and item.get("event") == "task_finish" and item.get("task_id") == task_id:
+                    finished = True
+    except OSError:
+        pass
+    if finished:
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            pass
+        return {}
+    return {
+        "decision": "block",
+        "reason": (
+            "RouteCraft Memory Loopが未完了です。検証後のLearnを実行した記録ID、または有限のスキップ理由を指定して"
+            f"evaluation task {task_id} をfinishし、安全なROUTECRAFT MEMORYマーカーを出力してください。"
+        ),
+    }
+
+
+def merge_results(event_name: object, *results: Mapping[str, Any]) -> dict[str, Any]:
+    contexts: list[str] = []
+    reasons: list[str] = []
+    messages: list[str] = []
+    for result in results:
+        hook_output = result.get("hookSpecificOutput")
+        if isinstance(hook_output, Mapping):
+            context = str(hook_output.get("additionalContext", "")).strip()
+            if context:
+                contexts.append(context)
+        if result.get("decision") == "block":
+            reason = str(result.get("reason", "")).strip()
+            if reason:
+                reasons.append(reason)
+        message = str(result.get("systemMessage", "")).strip()
+        if message:
+            messages.append(message)
+    merged: dict[str, Any] = {}
+    if contexts and event_name == "SessionStart":
+        merged["hookSpecificOutput"] = {"hookEventName": "SessionStart", "additionalContext": "\n\n".join(contexts)}
+    if reasons:
+        merged.update({"decision": "block", "reason": "\n\n".join(reasons)})
+    if messages:
+        merged["systemMessage"] = "\n".join(messages)
+    return merged
 
 
 def start(event: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
@@ -222,13 +351,13 @@ def stop(event: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
 
 def evaluate(event: Mapping[str, Any]) -> dict[str, Any]:
     config = load_config()
-    if not config:
-        return {}
     name = event.get("hook_event_name")
     if name == "SessionStart":
-        return start(event, config)
+        source_result = start(event, config) if config else {}
+        return merge_results(name, source_result, memory_start())
     if name == "Stop":
-        return stop(event, config)
+        source_result = stop(event, config) if config else {}
+        return merge_results(name, source_result, memory_stop(event))
     return {}
 
 

@@ -28,7 +28,7 @@ Do not override an assigned experiment mode merely because another mode is more 
 
 ## Record recall without storing the query
 
-After a bounded recall, record only returned record IDs and ranks:
+After a bounded recall, record exactly one result, including zero matches, and record only returned record IDs and ranks:
 
 ```text
 python <plugin>/scripts/routecraft_evaluation.py recall \
@@ -40,6 +40,18 @@ python <plugin>/scripts/routecraft_evaluation.py recall \
 ```
 
 The evaluator loads repository/device metadata from the records themselves. It does not persist the raw recall query.
+
+## Complete the Memory Loop
+
+Every tracked task has an explicit local-only lifecycle: `start` → `recall` → use judgment → `learn` or skip → `finish`. The evaluator never calls `learn`; after verification the parent must invoke the memory CLI manually when a reusable case is warranted.
+
+With evaluation enabled, `start` also creates a local sidecar keyed by a one-way hash of `CODEX_SESSION_ID` or `CODEX_THREAD_ID`. `finish` removes it. The lifecycle hook blocks the first Stop while that sidecar is still open, but does not block `stop_hook_active` re-entry. No raw session ID, prompt, query, or path is written to the sidecar.
+
+- `off` mode: do not recall or learn; finish with `--skip-reason mode_off`.
+- `recall` mode: record one recall result but do not learn; finish with `--skip-reason mode_recall_only`.
+- `full` mode: finish with one or more `--learned-record` IDs, or one of `no_reusable_learning`, `not_verified`, `store_unavailable`, or `task_cancelled` via `--skip-reason`.
+
+The finite reason is required so a recall never silently ends without a learning decision. It is metadata only: never include prompts, queries, source packets, paths, logs, or secrets.
 
 ## Classify recalled memory after verification
 

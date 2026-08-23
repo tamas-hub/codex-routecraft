@@ -30,12 +30,20 @@ from routecraft_memory_lib.base import load_config, resolve_device_id  # noqa: E
 from routecraft_memory_lib.records import load_records  # noqa: E402
 from routecraft_memory_lib.search import recall_records  # noqa: E402
 
-EVAL_SCHEMA_VERSION = 1
+EVAL_SCHEMA_VERSION = 2
 DEFAULT_MODE = "full"
 VALID_MODES = ("off", "recall", "full")
 VALID_TASK_CLASSES = ("general", "debugging", "implementation", "ci", "refactor", "docs", "release", "integration", "test")
 VALID_RISKS = ("low", "medium", "high", "critical")
 VALID_OUTCOMES = ("success", "partial", "failed", "cancelled")
+VALID_SKIP_REASONS = (
+    "mode_off",
+    "mode_recall_only",
+    "no_reusable_learning",
+    "not_verified",
+    "store_unavailable",
+    "task_cancelled",
+)
 RECORD_ID_RE = re.compile(r"^(?:CASE|CAND|RULE)-[A-Z0-9-]+$")
 SAFE_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ABSOLUTE_USER_PATH_RE = re.compile(r"(?:[A-Za-z]:\\Users\\|/Users/[^/]+/|/home/[^/]+/)", re.I)
@@ -72,6 +80,16 @@ def config_path(base: Path) -> Path:
 
 def events_path(base: Path) -> Path:
     return base / "events.jsonl"
+
+
+def session_state_path(base: Path, session_id: str) -> Path:
+    import hashlib
+    key = hashlib.sha256(session_id.encode("utf-8", errors="replace")).hexdigest()[:32]
+    return base / "sessions" / f"{key}.json"
+
+
+def active_session_id() -> str:
+    return str(os.environ.get("CODEX_SESSION_ID") or os.environ.get("CODEX_THREAD_ID") or "").strip()
 
 
 def benchmark_last_path(base: Path) -> Path:
@@ -135,6 +153,14 @@ def atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
             temp.unlink()
 
 
+def load_json_file(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def default_config() -> dict[str, Any]:
     return {
         "schema_version": EVAL_SCHEMA_VERSION,
@@ -194,6 +220,41 @@ def normalize_repository(value: str) -> str:
     return ""
 
 
+def normalize_task_class(value: str) -> str:
+    """Map untrusted/free-form task labels to the finite local metric taxonomy.
+
+    The original label is intentionally neither returned nor persisted.  This
+    lets callers pass user-derived labels without creating an unbounded or
+    prompt-bearing field in the local evaluation log.
+    """
+    normalized = re.sub(r"\s+", " ", str(value or "").strip().lower())
+    if not normalized:
+        return "general"
+    if normalized in VALID_TASK_CLASSES:
+        return normalized
+    searchable = re.sub(r"[-_]+", " ", normalized)
+
+    def contains(keyword: str) -> bool:
+        if keyword.isascii():
+            return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", searchable) is not None
+        return keyword in searchable
+
+    keyword_groups = (
+        ("ci", ("ci", "pipeline", "workflow", "github action", "build failure", "継続的インテグレーション", "パイプライン")),
+        ("test", ("test", "testing", "verification", "regression", "unit", "e2e", "qa", "テスト", "試験", "検証")),
+        ("debugging", ("debug", "bug", "bugfix", "diagnosis", "investigation", "fix", "error", "failure", "crash", "defect", "障害", "不具合", "エラー", "修正", "原因調査")),
+        ("refactor", ("refactor", "cleanup", "rename", "modernize", "リファクタ", "整理")),
+        ("docs", ("doc", "readme", "documentation", "manual", "ドキュメント", "説明書")),
+        ("release", ("release", "publish", "deploy", "deployment", "version", "changelog", "リリース", "公開", "配布")),
+        ("integration", ("integration", "integrate", "migration", "api", "connector", "interop", "telemetry", "observability", "連携", "統合", "接続", "移行", "観測")),
+        ("implementation", ("implement", "implementation", "feature", "frontend", "backend", "dashboard", "ui", "develop", "coding", "機能", "実装", "開発", "画面")),
+    )
+    for category, keywords in keyword_groups:
+        if any(contains(keyword) for keyword in keywords):
+            return category
+    return "general"
+
+
 def repository_from_path(path: Path) -> str:
     try:
         process = subprocess.run(
@@ -247,14 +308,20 @@ def validate_event(payload: Mapping[str, Any]) -> None:
 def append_event(base: Path, payload: Mapping[str, Any]) -> None:
     validate_event(payload)
     ensure_dir(base)
-    line = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
     with EvalLock(base):
-        with events_path(base).open("a", encoding="utf-8", newline="\n") as handle:
-            handle.write(line)
-            handle.flush()
-            os.fsync(handle.fileno())
-        with contextlib.suppress(OSError):
-            os.chmod(events_path(base), 0o600)
+        append_event_unlocked(base, payload)
+
+
+def append_event_unlocked(base: Path, payload: Mapping[str, Any]) -> None:
+    validate_event(payload)
+    ensure_dir(base)
+    line = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    with events_path(base).open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(line)
+        handle.flush()
+        os.fsync(handle.fileno())
+    with contextlib.suppress(OSError):
+        os.chmod(events_path(base), 0o600)
 
 
 def load_events(base: Path) -> tuple[list[dict[str, Any]], int]:
@@ -276,7 +343,7 @@ def load_events(base: Path) -> tuple[list[dict[str, Any]], int]:
     return events, malformed
 
 
-def next_mode(base: Path, config: dict[str, Any], override: str | None = None) -> str:
+def next_mode(base: Path, config: dict[str, Any], override: str | None = None, *, lock_held: bool = False) -> str:
     if override:
         if override not in VALID_MODES:
             raise EvaluationError(f"invalid mode: {override}")
@@ -284,7 +351,7 @@ def next_mode(base: Path, config: dict[str, Any], override: str | None = None) -
     experiment = config.get("experiment") or {}
     if not experiment.get("enabled"):
         return str(config.get("mode") or DEFAULT_MODE)
-    with EvalLock(base):
+    def assign() -> str:
         current = load_eval_config(base)
         current_experiment = current.get("experiment") or {}
         sequence = list(current_experiment.get("sequence") or [])
@@ -293,7 +360,11 @@ def next_mode(base: Path, config: dict[str, Any], override: str | None = None) -
         current_experiment["counter"] = counter + 1
         current["experiment"] = current_experiment
         save_eval_config(base, current)
-    return mode
+        return mode
+    if lock_held:
+        return assign()
+    with EvalLock(base):
+        return assign()
 
 
 def make_task_id(device_id: str) -> str:
@@ -306,25 +377,44 @@ def make_task_id(device_id: str) -> str:
 
 
 def start_task(base: Path, *, repository: str, task_class: str, risk: str, mode_override: str | None = None) -> dict[str, Any]:
-    config = load_eval_config(base)
-    if not bool(config.get("enabled")):
-        return {"schema_version": 1, "tracking": False, "mode": str(config.get("mode") or DEFAULT_MODE)}
-    mode = next_mode(base, config, mode_override)
-    device_id = evaluation_device_id()
-    task_id = make_task_id(device_id)
-    event = {
-        "schema_version": EVAL_SCHEMA_VERSION,
-        "event": "task_start",
-        "ts": utc_now(),
-        "task_id": task_id,
-        "mode": mode,
-        "repository": normalize_repository(repository),
-        "task_class": task_class,
-        "risk": risk,
-        "device_id": device_id,
-    }
-    append_event(base, event)
-    return {"schema_version": 1, "tracking": True, "task_id": task_id, "mode": mode, "repository": event["repository"], "task_class": task_class}
+    safe_task_class = normalize_task_class(task_class)
+    session_id = active_session_id()
+    with EvalLock(base):
+        config = load_eval_config(base)
+        if not bool(config.get("enabled")):
+            return {"schema_version": EVAL_SCHEMA_VERSION, "tracking": False, "mode": str(config.get("mode") or DEFAULT_MODE), "task_class": safe_task_class}
+        session_target = session_state_path(base, session_id) if session_id else None
+        if session_target is not None:
+            existing = load_json_file(session_target)
+            if existing:
+                existing_task_id = str(existing.get("task_id", ""))
+                events, _ = load_events(base)
+                if existing_task_id and not any(item.get("event") == "task_finish" and item.get("task_id") == existing_task_id for item in events):
+                    raise EvaluationError(f"session already has an unfinished evaluation task: {existing_task_id}")
+        mode = next_mode(base, config, mode_override, lock_held=True)
+        device_id = evaluation_device_id()
+        task_id = make_task_id(device_id)
+        event = {
+            "schema_version": EVAL_SCHEMA_VERSION,
+            "event": "task_start",
+            "ts": utc_now(),
+            "task_id": task_id,
+            "mode": mode,
+            "repository": normalize_repository(repository),
+            "task_class": safe_task_class,
+            "risk": risk,
+            "device_id": device_id,
+        }
+        if session_target is not None:
+            atomic_json(session_target, {"schema_version": 1, "task_id": task_id, "opened_at": event["ts"]})
+        try:
+            append_event_unlocked(base, event)
+        except Exception:
+            if session_target is not None:
+                with contextlib.suppress(FileNotFoundError):
+                    session_target.unlink()
+            raise
+    return {"schema_version": EVAL_SCHEMA_VERSION, "tracking": True, "task_id": task_id, "mode": mode, "repository": event["repository"], "task_class": safe_task_class}
 
 
 def record_lookup(store: Path) -> dict[str, Any]:
@@ -351,8 +441,20 @@ def record_recall(base: Path, *, task_id: str, store: Path, ranked_ids: Sequence
             "repository": normalize_repository(str(record.metadata.get("repository", ""))),
             "source_device_id": str(record.metadata.get("device_id", ""))[:32],
         })
-    event = {"schema_version": EVAL_SCHEMA_VERSION, "event": "recall", "ts": utc_now(), "task_id": task_id, "device_id": device_id, "match_count": len(selected), "records": selected}
-    append_event(base, event)
+    with EvalLock(base):
+        events, _ = load_events(base)
+        start = find_task_start(events, task_id)
+        if start is None:
+            raise EvaluationError(f"task start not found: {task_id}")
+        mode = str(start.get("mode") or "")
+        if mode == "off":
+            raise EvaluationError("evaluation mode off must not record persistent-memory recall")
+        if any(event.get("event") == "recall" and event.get("task_id") == task_id for event in events):
+            raise EvaluationError("memory recall is already recorded for this task")
+        if any(event.get("event") == "task_finish" and event.get("task_id") == task_id for event in events):
+            raise EvaluationError("task is already finished")
+        event = {"schema_version": EVAL_SCHEMA_VERSION, "event": "recall", "ts": utc_now(), "task_id": task_id, "device_id": device_id, "match_count": len(selected), "records": selected}
+        append_event_unlocked(base, event)
     return {"tracking": True, "task_id": task_id, "record_count": len(selected)}
 
 
@@ -363,11 +465,65 @@ def find_task_start(events: Sequence[Mapping[str, Any]], task_id: str) -> Mappin
     return None
 
 
-def finish_task(base: Path, *, task_id: str, outcome: str, elapsed_seconds: float | None, tool_calls: int | None, failed_hypotheses: int | None, useful_records: Sequence[str], misleading_records: Sequence[str], stale_records: Sequence[str], learned_records: Sequence[str], source_chars: int | None, record_chars: int | None) -> dict[str, Any]:
+def task_recalls(events: Sequence[Mapping[str, Any]], task_id: str) -> list[Mapping[str, Any]]:
+    return [event for event in events if event.get("event") == "recall" and event.get("task_id") == task_id]
+
+
+def memory_loop_status(
+    *,
+    mode: str,
+    recalls: Sequence[Mapping[str, Any]],
+    learned_records: Sequence[str],
+    skip_reason: str | None,
+) -> tuple[str, str | None, int]:
+    """Validate the explicit local Memory Loop without triggering learning.
+
+    A caller must invoke the memory CLI itself before reporting learned record
+    IDs.  The evaluator only records that verified result or a finite reason
+    learning did not occur.
+    """
+    recall_count = 0
+    for event in recalls:
+        try:
+            recall_count += max(0, int(event.get("match_count", 0)))
+        except (TypeError, ValueError):
+            raise EvaluationError("invalid recall count in local evaluation event") from None
+    if mode not in VALID_MODES:
+        raise EvaluationError(f"invalid task mode in start event: {mode!r}")
+    if mode == "off":
+        if recalls:
+            raise EvaluationError("evaluation mode off must not contain a recall event")
+        if learned_records:
+            raise EvaluationError("evaluation mode off must not contain learned records")
+        if skip_reason != "mode_off":
+            raise EvaluationError("evaluation mode off requires --skip-reason mode_off")
+        return "skipped", skip_reason, 0
+
+    if len(recalls) != 1:
+        raise EvaluationError("memory modes recall/full require exactly one recorded recall, including zero matches")
+    if mode == "recall":
+        if learned_records:
+            raise EvaluationError("evaluation mode recall must not contain learned records")
+        if skip_reason != "mode_recall_only":
+            raise EvaluationError("evaluation mode recall requires --skip-reason mode_recall_only")
+        return "skipped", skip_reason, recall_count
+
+    if learned_records:
+        if skip_reason is not None:
+            raise EvaluationError("a learned task must not also declare a skip reason")
+        return "learned", None, recall_count
+    if skip_reason not in VALID_SKIP_REASONS or skip_reason in {"mode_off", "mode_recall_only"}:
+        raise EvaluationError("evaluation mode full requires a finite --skip-reason when no learned record is reported")
+    return "skipped", skip_reason, recall_count
+
+
+def _finish_task_unlocked(base: Path, *, task_id: str, outcome: str, elapsed_seconds: float | None, tool_calls: int | None, failed_hypotheses: int | None, useful_records: Sequence[str], misleading_records: Sequence[str], stale_records: Sequence[str], learned_records: Sequence[str], skip_reason: str | None, source_chars: int | None, record_chars: int | None) -> dict[str, Any]:
     events, _ = load_events(base)
     start = find_task_start(events, task_id)
     if start is None:
         raise EvaluationError(f"task start not found: {task_id}")
+    if any(event.get("event") == "task_finish" and event.get("task_id") == task_id for event in events):
+        raise EvaluationError("task is already finished")
     if elapsed_seconds is None:
         elapsed_seconds = max(0.0, (parse_time(utc_now()) - parse_time(str(start["ts"]))).total_seconds())
     categories = {
@@ -379,7 +535,35 @@ def finish_task(base: Path, *, task_id: str, outcome: str, elapsed_seconds: floa
     verdict_ids = categories["useful_records"] + categories["misleading_records"] + categories["stale_records"]
     if len(set(verdict_ids)) != len(verdict_ids):
         raise EvaluationError("a recalled record cannot have more than one final verdict")
-    event: dict[str, Any] = {"schema_version": EVAL_SCHEMA_VERSION, "event": "task_finish", "ts": utc_now(), "task_id": task_id, "outcome": outcome, "elapsed_seconds": round(float(elapsed_seconds), 3), **categories}
+    recalled_ids = {
+        str(record.get("id", ""))
+        for recall in task_recalls(events, task_id)
+        for record in (recall.get("records") or [])
+        if isinstance(record, Mapping)
+    }
+    if any(record_id not in recalled_ids for record_id in verdict_ids):
+        raise EvaluationError("memory verdicts must reference records returned by this task's recall")
+    mode = str(start.get("mode") or "")
+    learn_status, safe_skip_reason, recall_count = memory_loop_status(
+        mode=mode,
+        recalls=task_recalls(events, task_id),
+        learned_records=categories["learned_records"],
+        skip_reason=skip_reason,
+    )
+    event: dict[str, Any] = {
+        "schema_version": EVAL_SCHEMA_VERSION,
+        "event": "task_finish",
+        "ts": utc_now(),
+        "task_id": task_id,
+        "outcome": outcome,
+        "elapsed_seconds": round(float(elapsed_seconds), 3),
+        "memory_mode": mode,
+        "memory_recall_count": recall_count,
+        "memory_useful_count": len(categories["useful_records"]),
+        "memory_learn_status": learn_status,
+        "memory_skip_reason": safe_skip_reason,
+        **categories,
+    }
     if tool_calls is not None:
         event["tool_calls"] = int(tool_calls)
     if failed_hypotheses is not None:
@@ -388,8 +572,44 @@ def finish_task(base: Path, *, task_id: str, outcome: str, elapsed_seconds: floa
         event["source_chars"] = int(source_chars)
     if record_chars is not None:
         event["record_chars"] = int(record_chars)
-    append_event(base, event)
-    return {"tracking": True, "task_id": task_id, "outcome": outcome, "elapsed_seconds": event["elapsed_seconds"]}
+    append_event_unlocked(base, event)
+    session_id = active_session_id()
+    if session_id:
+        target = session_state_path(base, session_id)
+        state = load_json_file(target)
+        if state.get("task_id") == task_id:
+            with contextlib.suppress(FileNotFoundError):
+                target.unlink()
+    return {
+        "tracking": True,
+        "task_id": task_id,
+        "outcome": outcome,
+        "elapsed_seconds": event["elapsed_seconds"],
+        "memory_mode": mode,
+        "memory_recall_count": recall_count,
+        "memory_useful_count": event["memory_useful_count"],
+        "memory_learn_status": learn_status,
+        "memory_skip_reason": safe_skip_reason,
+    }
+
+
+def finish_task(base: Path, *, task_id: str, outcome: str, elapsed_seconds: float | None, tool_calls: int | None, failed_hypotheses: int | None, useful_records: Sequence[str], misleading_records: Sequence[str], stale_records: Sequence[str], learned_records: Sequence[str], skip_reason: str | None, source_chars: int | None, record_chars: int | None) -> dict[str, Any]:
+    with EvalLock(base):
+        return _finish_task_unlocked(
+            base,
+            task_id=task_id,
+            outcome=outcome,
+            elapsed_seconds=elapsed_seconds,
+            tool_calls=tool_calls,
+            failed_hypotheses=failed_hypotheses,
+            useful_records=useful_records,
+            misleading_records=misleading_records,
+            stale_records=stale_records,
+            learned_records=learned_records,
+            skip_reason=skip_reason,
+            source_chars=source_chars,
+            record_chars=record_chars,
+        )
 
 
 def median(values: Sequence[float]) -> float | None:
@@ -443,6 +663,8 @@ def summarize(base: Path) -> dict[str, Any]:
     task_repositories: set[str] = set()
     task_devices: set[str] = set()
     source_devices: set[str] = set()
+    learned_tasks = skipped_tasks = 0
+    skip_reason_counts = {reason: 0 for reason in VALID_SKIP_REASONS}
 
     for task_id, finish in finishes.items():
         start = starts.get(task_id)
@@ -460,6 +682,14 @@ def summarize(base: Path) -> dict[str, Any]:
             "failed_hypotheses": finish.get("failed_hypotheses"),
         }
         completed.append(task)
+        learn_status = str(finish.get("memory_learn_status") or "")
+        if learn_status == "learned":
+            learned_tasks += 1
+        elif learn_status == "skipped":
+            skipped_tasks += 1
+            skip_reason = str(finish.get("memory_skip_reason") or "")
+            if skip_reason in skip_reason_counts:
+                skip_reason_counts[skip_reason] += 1
         if task["repository"]:
             task_repositories.add(task["repository"])
         if task["device_id"]:
@@ -559,7 +789,12 @@ def summarize(base: Path) -> dict[str, Any]:
                 benchmark = data
 
     metrics = {
+        "started_tasks": len(starts),
         "completed_tasks": len(completed),
+        "unfinished_tasks": len(set(starts) - set(finishes)),
+        "learned_tasks": learned_tasks,
+        "skipped_tasks": skipped_tasks,
+        "skip_reason_counts": skip_reason_counts,
         "recall_tasks": recall_task_count,
         "recalled_records": recalled_records,
         "useful_records": useful_records,
@@ -659,10 +894,15 @@ def compact_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
     benchmark = summary.get("benchmark") or {}
     tracking = summary.get("tracking") or {}
     return {
-        "schema_version": 1,
+        "schema_version": EVAL_SCHEMA_VERSION,
         "enabled": bool(tracking.get("enabled")),
         "mode": str(tracking.get("mode", DEFAULT_MODE)),
+        "started_tasks": int(metrics.get("started_tasks", 0)),
         "completed_tasks": int(metrics.get("completed_tasks", 0)),
+        "unfinished_tasks": int(metrics.get("unfinished_tasks", 0)),
+        "learned_tasks": int(metrics.get("learned_tasks", 0)),
+        "skipped_tasks": int(metrics.get("skipped_tasks", 0)),
+        "skip_reason_counts": metrics.get("skip_reason_counts", {}),
         "recall_tasks": int(metrics.get("recall_tasks", 0)),
         "useful_task_rate": metrics.get("useful_task_rate"),
         "observed_precision": metrics.get("observed_precision"),
@@ -756,7 +996,7 @@ def build_parser() -> argparse.ArgumentParser:
     start = sub.add_parser("start", help="Start a measured RouteCraft task")
     start.add_argument("--repository")
     start.add_argument("--repo-path")
-    start.add_argument("--task-class", choices=VALID_TASK_CLASSES, default="general")
+    start.add_argument("--task-class", default="general", help="Free-form label normalized to a safe RouteCraft category")
     start.add_argument("--risk", choices=VALID_RISKS, default="low")
     start.add_argument("--mode", choices=VALID_MODES)
     start.add_argument("--json", action="store_true")
@@ -775,6 +1015,7 @@ def build_parser() -> argparse.ArgumentParser:
     finish.add_argument("--misleading-record", action="append", default=[])
     finish.add_argument("--stale-record", action="append", default=[])
     finish.add_argument("--learned-record", action="append", default=[])
+    finish.add_argument("--skip-reason", choices=VALID_SKIP_REASONS, help="Required when learning did not produce a record")
     finish.add_argument("--source-chars", type=int)
     finish.add_argument("--record-chars", type=int)
     finish.add_argument("--json", action="store_true")
@@ -842,7 +1083,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for value, label in ((args.elapsed_seconds, "elapsed-seconds"), (args.tool_calls, "tool-calls"), (args.failed_hypotheses, "failed-hypotheses"), (args.source_chars, "source-chars"), (args.record_chars, "record-chars")):
                 if value is not None and value < 0:
                     raise EvaluationError(f"{label} must be non-negative")
-            output = finish_task(base, task_id=args.task_id, outcome=args.outcome, elapsed_seconds=args.elapsed_seconds, tool_calls=args.tool_calls, failed_hypotheses=args.failed_hypotheses, useful_records=args.useful_record, misleading_records=args.misleading_record, stale_records=args.stale_record, learned_records=args.learned_record, source_chars=args.source_chars, record_chars=args.record_chars)
+            output = finish_task(base, task_id=args.task_id, outcome=args.outcome, elapsed_seconds=args.elapsed_seconds, tool_calls=args.tool_calls, failed_hypotheses=args.failed_hypotheses, useful_records=args.useful_record, misleading_records=args.misleading_record, stale_records=args.stale_record, learned_records=args.learned_record, skip_reason=args.skip_reason, source_chars=args.source_chars, record_chars=args.record_chars)
         elif args.command == "summary":
             summary = summarize(base)
             output = compact_summary(summary) if args.compact else summary

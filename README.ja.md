@@ -139,7 +139,7 @@ Use $codex-routecraft:memory to inspect, validate, recall, or synchronize my pri
 
 ## 指示時と実動のテレメトリ
 
-`routecraft_telemetry.py`は、Codexのローカルrolloutから、**人間がタスクを開始した親モデル／推論レベル → 実際に動いた子モデル／推論レベル**を対応付けます。実行回数、入力、cache入力、出力、推論出力、総トークン、経過時間も収集します。
+`routecraft_telemetry.py`は、Codexのローカルrolloutから、**人間がタスクを開始した親モデル／推論レベル → 実際に動いた子モデル／推論レベル**を対応付けます。実行回数、入力、cache入力、出力、推論出力、総トークン、経過時間も収集します。schema v2では、Assistantが厳密なマーカーで明示した固定task class、匿名化済み短文、Recall／有用判定／Learn状態だけを追加できます。ユーザーpromptからの自動要約、path、ファイル名、Record ID、credential、raw session IDは送信しません。
 
 会話本文、作業ディレクトリ、ファイル名、Agentのtask path、raw session IDは出力しません。端末ID、親子session IDは端末固有saltでハッシュ化します。
 

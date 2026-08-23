@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1+codex.20260823011912
+
+- Make every measured Memory task close explicitly with a learned record or a finite skip reason.
+- Normalize free-form task labels into the fixed evaluation taxonomy instead of rejecting the CLI call.
+- Link open evaluation tasks to a one-way session hash and make the lifecycle hook flag an unfinished first Stop without auto-learning.
+- Add privacy-safe schema v2 execution telemetry for explicit task summaries and Recall/usefulness/Learn state; retain nullable compatibility for older runs.
+- Add lifecycle, unsafe-summary, late-marker, duplicate-finish, and Stop-guard regression coverage.
+
 ## 0.5.1
 
 - Add a windowless Windows notification-area host for Observatory heartbeat.

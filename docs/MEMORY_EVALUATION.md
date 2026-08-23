@@ -56,6 +56,8 @@ Do not enable baseline experiments for urgent or safety-critical work merely to 
 
 Start:
 
+Free-form task labels are normalized into the fixed evaluation taxonomy; the original label is not persisted. When evaluation is enabled, `start` also opens a local sidecar keyed only by a one-way session hash.
+
 ```sh
 python plugins/codex-routecraft/scripts/routecraft_evaluation.py \
   start --repo-path . --task-class debugging --risk low --json
@@ -87,6 +89,8 @@ Verdicts:
 - omitted: neutral/not materially used.
 
 Only record tool-call counts, failed-hypothesis counts, or character counts when directly observable. Omit them rather than guessing.
+
+Every tracked task must close. In `full`, use `--learned-record` after a verified manual Learn, or `--skip-reason no_reusable_learning|not_verified|store_unavailable|task_cancelled`. `recall` uses `mode_recall_only`; `off` uses `mode_off`. A first Stop with an open sidecar is blocked so the parent can finish it; hook re-entry is not blocked and the hook never learns automatically. A later `SessionStart` reports unfinished tasks left by previous sessions and asks for verified completion or explicit cancellation with `task_cancelled`.
 
 ## Live metrics
 

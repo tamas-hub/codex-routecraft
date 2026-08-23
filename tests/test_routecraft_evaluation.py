@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,8 @@ class RouteCraftEvaluationTests(unittest.TestCase):
         self.env["ROUTECRAFT_MEMORY_CONFIG"] = str(self.config)
         self.env["ROUTECRAFT_EVALUATION_DIR"] = str(self.eval_dir)
         self.env["ROUTECRAFT_DEVICE_ID"] = "devicea"
+        self.env.pop("CODEX_SESSION_ID", None)
+        self.env.pop("CODEX_THREAD_ID", None)
         self.run_memory("init", "--store", str(self.store), "--git-init")
 
     def tearDown(self) -> None:
@@ -164,6 +167,135 @@ class RouteCraftEvaluationTests(unittest.TestCase):
             )
             modes.append(started["mode"])
         self.assertEqual(modes, ["off", "recall", "full"])
+
+    def test_session_sidecar_tracks_one_open_task_and_closes_on_finish(self) -> None:
+        self.run_eval("configure", "--enable", "--mode", "off", "--json")
+        env = dict(self.env)
+        env["CODEX_SESSION_ID"] = "private-session-value"
+        started = json.loads(self.run_eval(
+            "start", "--repository", "example/repo", "--task-class", "integration", "--risk", "low", "--json", env=env
+        ).stdout)
+        states = list((self.eval_dir / "sessions").glob("*.json"))
+        self.assertEqual(len(states), 1)
+        self.assertNotIn("private-session-value", states[0].read_text(encoding="utf-8"))
+        duplicate = self.run_cmd(
+            EVALUATOR, "--dir", str(self.eval_dir), "start", "--task-class", "test", "--risk", "low", "--json",
+            env=env, check=False,
+        )
+        self.assertNotEqual(duplicate.returncode, 0)
+        self.assertIn("unfinished evaluation task", duplicate.stderr)
+        self.run_eval(
+            "finish", "--task-id", started["task_id"], "--outcome", "success", "--skip-reason", "mode_off", "--json", env=env
+        )
+        self.assertFalse(states[0].exists())
+
+    def test_parallel_start_and_finish_are_serialized(self) -> None:
+        self.run_eval("configure", "--enable", "--mode", "off", "--json")
+        session_env = dict(self.env)
+        session_env["CODEX_SESSION_ID"] = "parallel-session"
+
+        def start_once():
+            return self.run_cmd(
+                EVALUATOR, "--dir", str(self.eval_dir), "start", "--task-class", "test", "--risk", "low", "--json",
+                env=session_env, check=False,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            starts = list(pool.map(lambda _: start_once(), range(2)))
+        self.assertEqual(sorted(item.returncode for item in starts), [0, 2])
+        started = json.loads(next(item.stdout for item in starts if item.returncode == 0))
+
+        def finish_once():
+            return self.run_cmd(
+                EVALUATOR, "--dir", str(self.eval_dir), "finish", "--task-id", started["task_id"],
+                "--outcome", "success", "--skip-reason", "mode_off", "--json", env=session_env, check=False,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            finishes = list(pool.map(lambda _: finish_once(), range(2)))
+        self.assertEqual(sorted(item.returncode for item in finishes), [0, 2])
+        events = [json.loads(line) for line in (self.eval_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(sum(item.get("event") == "task_start" for item in events), 1)
+        self.assertEqual(sum(item.get("event") == "task_finish" for item in events), 1)
+
+    def test_free_form_task_class_is_normalized_without_persisting_the_input(self) -> None:
+        self.run_eval("configure", "--enable", "--mode", "full", "--json")
+        private_label = "ユーザー依頼の実装と機密の説明"
+        started = json.loads(
+            self.run_eval(
+                "start", "--repository", "example/repo", "--task-class", private_label, "--risk", "low", "--json"
+            ).stdout
+        )
+        self.assertEqual(started["task_class"], "implementation")
+        raw = (self.eval_dir / "events.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn(private_label, raw)
+        self.assertIn('"task_class":"implementation"', raw)
+
+        aliases = {
+            "diagnosis": "debugging", "verification": "test", "documentation": "docs",
+            "deployment": "release", "migration": "integration", "observability-ui": "integration",
+            "frontend": "implementation",
+        }
+        for label, expected in aliases.items():
+            started = json.loads(self.run_eval(
+                "start", "--repository", "example/repo", "--task-class", label, "--risk", "low", "--json"
+            ).stdout)
+            self.assertEqual(started["task_class"], expected)
+        for label in ("decision memory", "quality review", "specialized work"):
+            started = json.loads(self.run_eval(
+                "start", "--repository", "example/repo", "--task-class", label, "--risk", "low", "--json"
+            ).stdout)
+            self.assertEqual(started["task_class"], "general")
+
+    def test_full_memory_loop_requires_recorded_recall_and_learning_or_finite_skip_reason(self) -> None:
+        self.run_eval("configure", "--enable", "--mode", "full", "--json")
+        started = json.loads(
+            self.run_eval(
+                "start", "--repository", "example/repo", "--task-class", "feature work", "--risk", "low", "--json"
+            ).stdout
+        )
+        missing_recall = self.run_cmd(
+            EVALUATOR,
+            "--dir", str(self.eval_dir), "finish", "--task-id", started["task_id"], "--outcome", "success",
+            "--skip-reason", "no_reusable_learning", "--json", env=self.env, check=False,
+        )
+        self.assertEqual(missing_recall.returncode, 2)
+        self.assertIn("exactly one recorded recall", missing_recall.stderr)
+
+        self.run_eval("recall", "--task-id", started["task_id"], "--store", str(self.store), "--json")
+        missing_reason = self.run_cmd(
+            EVALUATOR,
+            "--dir", str(self.eval_dir), "finish", "--task-id", started["task_id"], "--outcome", "success", "--json",
+            env=self.env, check=False,
+        )
+        self.assertEqual(missing_reason.returncode, 2)
+        self.assertIn("finite --skip-reason", missing_reason.stderr)
+
+        finished = json.loads(
+            self.run_eval(
+                "finish", "--task-id", started["task_id"], "--outcome", "success",
+                "--skip-reason", "no_reusable_learning", "--json",
+            ).stdout
+        )
+        self.assertEqual(finished["memory_learn_status"], "skipped")
+        self.assertEqual(finished["memory_skip_reason"], "no_reusable_learning")
+        self.assertEqual(finished["memory_recall_count"], 0)
+
+        duplicate_finish = self.run_cmd(
+            EVALUATOR,
+            "--dir", str(self.eval_dir), "finish", "--task-id", started["task_id"], "--outcome", "success",
+            "--skip-reason", "no_reusable_learning", "--json", env=self.env, check=False,
+        )
+        self.assertEqual(duplicate_finish.returncode, 2)
+        self.assertIn("task is already finished", duplicate_finish.stderr)
+
+        compact = json.loads(self.run_eval("summary", "--compact", "--json").stdout)
+        self.assertEqual(compact["started_tasks"], 1)
+        self.assertEqual(compact["completed_tasks"], 1)
+        self.assertEqual(compact["unfinished_tasks"], 0)
+        self.assertEqual(compact["learned_tasks"], 0)
+        self.assertEqual(compact["skipped_tasks"], 1)
+        self.assertEqual(compact["skip_reason_counts"]["no_reusable_learning"], 1)
 
     def test_retrieval_benchmark_reports_hit_recall_and_mrr_without_persisting_queries(self) -> None:
         case_id = self.create_case(
