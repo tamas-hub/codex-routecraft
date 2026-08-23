@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, hashlib, json, os, platform, subprocess, sys, urllib.request
+import argparse, hashlib, json, os, platform, re, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -97,6 +97,73 @@ def send(endpoint: str, token: str, payload: dict) -> dict:
     req=urllib.request.Request(endpoint,data=body,headers={"Content-Type":"application/json","Authorization":"Bearer "+token,"User-Agent":"RouteCraft-Observatory/2"},method="POST")
     with urllib.request.urlopen(req,timeout=15) as r:return json.loads(r.read().decode("utf-8"))
 
+
+class DeliveryError(RuntimeError):
+    def __init__(self, code: str, message: str, *, http_status: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.http_status = http_status
+
+
+SAFE_SERVER_ERROR = re.compile(r"^[A-Za-z0-9_. -]{1,160}$")
+SENSITIVE_ERROR_DETAIL = re.compile(r"\b(?:authorization|bearer|credential|password|secret|token)\b", re.IGNORECASE)
+
+
+def read_token(path_value: str | None, destination: str) -> str:
+    if not path_value:
+        raise DeliveryError("configuration_error", f"{destination} token file is not configured")
+    try:
+        token = Path(path_value).expanduser().read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise DeliveryError("configuration_error", f"{destination} token file is unavailable") from exc
+    if len(token) < 32:
+        raise DeliveryError("configuration_error", f"{destination} token is invalid")
+    return token
+
+
+def safe_http_detail(exc: urllib.error.HTTPError) -> str | None:
+    try:
+        body = exc.read(4096).decode("utf-8", errors="replace")
+        parsed = json.loads(body)
+    except Exception:
+        return None
+    finally:
+        try:
+            exc.close()
+        except Exception:
+            pass
+    detail = parsed.get("error") if isinstance(parsed, dict) else None
+    if isinstance(detail, str) and SAFE_SERVER_ERROR.fullmatch(detail) and not SENSITIVE_ERROR_DETAIL.search(detail):
+        return detail
+    return None
+
+
+def failure_result(destination: str, exc: Exception) -> dict:
+    result = {"ok": False, "error": f"{destination} upload failed", "code": "unexpected_error"}
+    try:
+        if isinstance(exc, DeliveryError):
+            result["code"] = exc.code
+            result["detail"] = str(exc)
+            if exc.http_status is not None:
+                result["http_status"] = exc.http_status
+            return result
+        if isinstance(exc, urllib.error.HTTPError):
+            result["code"] = "http_error"
+            result["http_status"] = int(exc.code)
+            detail = safe_http_detail(exc)
+            if detail:
+                result["detail"] = detail
+            return result
+        if isinstance(exc, (urllib.error.URLError, TimeoutError)):
+            result["code"] = "network_error"
+            return result
+        if isinstance(exc, (json.JSONDecodeError, UnicodeError)):
+            result["code"] = "invalid_response"
+            return result
+    except Exception:
+        return result
+    return result
+
 def send_telemetry(args: argparse.Namespace) -> dict:
     command = [
         sys.executable,
@@ -122,17 +189,47 @@ def send_telemetry(args: argparse.Namespace) -> dict:
         check=False,
     )
     if process.returncode != 0:
-        detail = process.stderr.strip()[:240] or f"exit code {process.returncode}"
-        raise RuntimeError(f"telemetry upload failed: {detail}")
+        http_match = re.search(r"HTTP Error\s+(\d{3})", process.stderr)
+        if http_match:
+            status = int(http_match.group(1))
+            raise DeliveryError("http_error", f"HTTP {status}", http_status=status)
+        raise DeliveryError("collector_error", f"telemetry collector exited with code {process.returncode}")
     lines = [line for line in process.stdout.splitlines() if line.strip()]
     if not lines:
-        raise RuntimeError("telemetry upload returned no result")
-    result = json.loads(lines[-1])
+        raise DeliveryError("invalid_response", "telemetry collector returned no result")
+    try:
+        result = json.loads(lines[-1])
+    except json.JSONDecodeError as exc:
+        raise DeliveryError("invalid_response", "telemetry collector returned invalid JSON") from exc
     if not isinstance(result, dict) or not result.get("ok"):
-        raise RuntimeError("telemetry upload returned an invalid result")
+        raise DeliveryError("invalid_response", "telemetry collector returned an invalid result")
     return result
 
-def main():
+
+def deliver(args: argparse.Namespace, payload: dict) -> dict:
+    result: dict = {"ok": True}
+    try:
+        token = read_token(args.token_file, "heartbeat")
+        heartbeat = send(args.endpoint, token, payload)
+        if not isinstance(heartbeat, dict) or not heartbeat.get("ok"):
+            raise DeliveryError("invalid_response", "heartbeat endpoint returned an invalid result")
+        result["heartbeat"] = heartbeat
+    except Exception as exc:
+        result["ok"] = False
+        result["heartbeat"] = failure_result("heartbeat", exc)
+
+    if args.telemetry_endpoint:
+        try:
+            if not args.telemetry_token_file or not args.telemetry_script:
+                raise DeliveryError("configuration_error", "telemetry configuration is incomplete")
+            result["telemetry"] = send_telemetry(args)
+        except Exception as exc:
+            result["ok"] = False
+            result["telemetry"] = failure_result("telemetry", exc)
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
     ap=argparse.ArgumentParser()
     ap.add_argument("--endpoint")
     ap.add_argument("--token-file")
@@ -144,17 +241,13 @@ def main():
     ap.add_argument("--telemetry-since-days", type=int, default=30)
     ap.add_argument("--telemetry-include-legacy", action="store_true")
     ap.add_argument("--print",action="store_true",dest="print_only")
-    a=ap.parse_args()
+    a=ap.parse_args(argv)
     p=build_payload(a.alias)
     if a.print_only or not a.endpoint:
-        print(json.dumps(p,ensure_ascii=False,indent=2)); return
-    if not a.token_file: raise SystemExit("--token-file is required with --endpoint")
-    token=Path(a.token_file).expanduser().read_text(encoding="utf-8").strip()
-    if len(token)<32: raise SystemExit("token is too short")
-    result = {"heartbeat": send(a.endpoint,token,p)}
-    if a.telemetry_endpoint:
-        if not a.telemetry_token_file or not a.telemetry_script:
-            raise SystemExit("--telemetry-token-file and --telemetry-script are required with --telemetry-endpoint")
-        result["telemetry"] = send_telemetry(a)
+        print(json.dumps(p,ensure_ascii=False,indent=2)); return 0
+    result = deliver(a, p)
     print(json.dumps(result,ensure_ascii=False))
-if __name__=="__main__": main()
+    return 0 if result["ok"] else 1
+
+
+if __name__=="__main__": raise SystemExit(main())

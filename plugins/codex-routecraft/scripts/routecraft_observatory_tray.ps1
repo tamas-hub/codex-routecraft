@@ -107,6 +107,28 @@ function Set-NotifyText([string]$Text) {
     $notifyIcon.Text = $Text.Substring(0, [Math]::Min(63, $Text.Length))
 }
 
+function Limit-StatusText([string]$Text) {
+    if (-not $Text) { return $null }
+    return $Text.Substring(0, [Math]::Min(1000, $Text.Length))
+}
+
+function Get-DestinationError([object]$Result, [string]$Label) {
+    if (-not $Result) {
+        return "${Label}: 結果を取得できませんでした"
+    }
+    $parts = @($Label)
+    if ($Result.http_status) {
+        $parts += "HTTP $($Result.http_status)"
+    }
+    elseif ($Result.code) {
+        $parts += [string]$Result.code
+    }
+    if ($Result.detail) {
+        $parts += [string]$Result.detail
+    }
+    return Limit-StatusText ($parts -join ': ')
+}
+
 function Save-Config {
     $temporary = "$ConfigPath.tmp"
     $config.enabled = $script:enabled
@@ -122,10 +144,27 @@ function Save-Status {
         last_attempt_at = $script:lastAttempt
         last_success_at = $script:lastSuccess
         last_error = $script:lastError
+        last_heartbeat_success_at = $script:lastHeartbeatSuccess
+        last_heartbeat_error = $script:lastHeartbeatError
+        last_telemetry_success_at = $script:lastTelemetrySuccess
+        last_telemetry_error = $script:lastTelemetryError
+        destinations = [ordered]@{
+            heartbeat = [ordered]@{
+                last_success_at = $script:lastHeartbeatSuccess
+                last_error = $script:lastHeartbeatError
+            }
+            telemetry = [ordered]@{
+                configured = [bool]$config.telemetry_endpoint
+                last_success_at = $script:lastTelemetrySuccess
+                last_error = $script:lastTelemetryError
+            }
+        }
         process_id = $PID
         updated_at = [DateTime]::UtcNow.ToString('o')
     }
-    $payload | ConvertTo-Json | Set-Content -LiteralPath $statusPath -Encoding utf8
+    $temporary = "$statusPath.tmp"
+    $payload | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporary -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $statusPath -Force
 }
 
 function Update-TrayState([ValidateSet('on', 'off', 'error', 'sending')][string]$State) {
@@ -139,9 +178,13 @@ function Update-TrayState([ValidateSet('on', 'off', 'error', 'sending')][string]
         }
         'error' {
             $notifyIcon.Icon = $icons.error
-            $statusItem.Text = 'Heartbeat: ON（送信エラー）'
+            $failed = @()
+            if ($script:lastHeartbeatError) { $failed += 'Xserver' }
+            if ($config.telemetry_endpoint -and $script:lastTelemetryError) { $failed += 'GPT Sites' }
+            $failedLabel = if ($failed.Count -gt 0) { ': ' + ($failed -join ' / ') } else { '' }
+            $statusItem.Text = "Heartbeat: ON（送信エラー$failedLabel）"
             $toggleItem.Text = 'Heartbeatを停止'
-            Set-NotifyText 'RouteCraft Heartbeat: ON / 送信エラー'
+            Set-NotifyText "RouteCraft Heartbeat: 送信エラー$failedLabel"
         }
         'sending' {
             $notifyIcon.Icon = $icons.on
@@ -173,19 +216,9 @@ function Start-Heartbeat {
     $script:nextDue = [DateTime]::UtcNow.AddSeconds($intervalSeconds)
 
     try {
-        foreach ($requiredPath in @($config.python_executable, $config.heartbeat_script, $config.token_file)) {
+        foreach ($requiredPath in @($config.python_executable, $config.heartbeat_script)) {
             if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
-                throw "必要なファイルがありません: $requiredPath"
-            }
-        }
-        if ($config.telemetry_endpoint) {
-            foreach ($requiredPath in @($config.telemetry_script, $config.telemetry_token_file)) {
-                if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
-                    throw "テレメトリに必要なファイルがありません: $requiredPath"
-                }
-            }
-            if ($config.telemetry_sites_bypass_token_file -and -not (Test-Path -LiteralPath $config.telemetry_sites_bypass_token_file -PathType Leaf)) {
-                throw "Sites認証ファイルがありません: $($config.telemetry_sites_bypass_token_file)"
+                throw '送信プログラムの起動に必要なファイルがありません。'
             }
         }
 
@@ -233,7 +266,9 @@ function Start-Heartbeat {
             $script:heartbeatProcess.Dispose()
             $script:heartbeatProcess = $null
         }
-        $script:lastError = $_.Exception.Message
+        $script:lastError = '送信処理を起動できませんでした。'
+        $script:lastHeartbeatError = $script:lastError
+        if ($config.telemetry_endpoint) { $script:lastTelemetryError = '送信処理を開始できませんでした。' }
         Update-TrayState 'error'
     }
 }
@@ -244,17 +279,58 @@ function Complete-Heartbeat {
     }
 
     $exitCode = $script:heartbeatProcess.ExitCode
-    $standardError = $script:heartbeatProcess.StandardError.ReadToEnd().Trim()
+    $standardOutput = $script:heartbeatProcess.StandardOutput.ReadToEnd().Trim()
+    [void]$script:heartbeatProcess.StandardError.ReadToEnd()
     $script:heartbeatProcess.Dispose()
     $script:heartbeatProcess = $null
 
-    if ($exitCode -eq 0) {
-        $script:lastSuccess = [DateTime]::UtcNow.ToString('o')
+    $result = $null
+    if ($standardOutput) {
+        try {
+            $lastLine = ($standardOutput -split '\r?\n' | Where-Object { $_.Trim() } | Select-Object -Last 1)
+            $result = $lastLine | ConvertFrom-Json
+        }
+        catch {
+            $result = $null
+        }
+    }
+
+    $completedAt = [DateTime]::UtcNow.ToString('o')
+    if ($result -and $result.heartbeat -and [bool]$result.heartbeat.ok) {
+        $script:lastHeartbeatSuccess = $completedAt
+        $script:lastHeartbeatError = $null
+    }
+    elseif ($result -and $result.heartbeat) {
+        $script:lastHeartbeatError = Get-DestinationError $result.heartbeat 'Xserver'
+    }
+    else {
+        $script:lastHeartbeatError = 'Xserver: 結果を取得できませんでした'
+    }
+
+    if ($config.telemetry_endpoint) {
+        if ($result -and $result.telemetry -and [bool]$result.telemetry.ok) {
+            $script:lastTelemetrySuccess = $completedAt
+            $script:lastTelemetryError = $null
+        }
+        elseif ($result -and $result.telemetry) {
+            $script:lastTelemetryError = Get-DestinationError $result.telemetry 'GPT Sites'
+        }
+        else {
+            $script:lastTelemetryError = 'GPT Sites: 結果を取得できませんでした'
+        }
+    }
+
+    $hasOverallResult = $result -and $result.PSObject.Properties['ok']
+    $fullSuccess = $exitCode -eq 0 -and $hasOverallResult -and [bool]$result.ok
+    if ($fullSuccess) {
+        $script:lastSuccess = $completedAt
         $script:lastError = $null
         if ($script:enabled) { Update-TrayState 'on' } else { Update-TrayState 'off' }
     }
     else {
-        $script:lastError = if ($standardError) { $standardError.Substring(0, [Math]::Min(240, $standardError.Length)) } else { "送信処理が終了コード $exitCode で失敗しました。" }
+        $destinationErrors = @($script:lastHeartbeatError, $script:lastTelemetryError) | Where-Object { $_ }
+        $script:lastError = Limit-StatusText (($destinationErrors -join ' / '))
+        if (-not $script:lastError) { $script:lastError = "送信処理が終了コード $exitCode で失敗しました。" }
         if ($script:enabled) { Update-TrayState 'error' } else { Update-TrayState 'off' }
     }
 }
@@ -278,10 +354,19 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
 
 $config = Get-Content -Raw -LiteralPath $ConfigPath | ConvertFrom-Json
 $intervalSeconds = [Math]::Max(60, [Math]::Min(3600, [int]$config.interval_seconds))
+$statusPath = Join-Path (Split-Path -Parent $ConfigPath) 'status.json'
+$previousStatus = $null
+if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
+    try { $previousStatus = Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json } catch { $previousStatus = $null }
+}
 $script:enabled = [bool]$config.enabled
-$script:lastAttempt = $null
-$script:lastSuccess = $null
+$script:lastAttempt = if ($previousStatus) { $previousStatus.last_attempt_at } else { $null }
+$script:lastSuccess = if ($previousStatus) { $previousStatus.last_success_at } else { $null }
 $script:lastError = $null
+$script:lastHeartbeatSuccess = if ($previousStatus -and $previousStatus.last_heartbeat_success_at) { $previousStatus.last_heartbeat_success_at } elseif ($previousStatus) { $previousStatus.last_success_at } else { $null }
+$script:lastHeartbeatError = $null
+$script:lastTelemetrySuccess = if ($previousStatus -and $previousStatus.last_telemetry_success_at) { $previousStatus.last_telemetry_success_at } elseif ($previousStatus -and $config.telemetry_endpoint) { $previousStatus.last_success_at } else { $null }
+$script:lastTelemetryError = $null
 $script:heartbeatProcess = $null
 $script:nextDue = [DateTime]::UtcNow
 

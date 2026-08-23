@@ -28,8 +28,16 @@ class ObservatoryTrayContractTests(unittest.TestCase):
             "RouteCraftObservatoryTrayDisable",
             "--telemetry-endpoint",
             "--telemetry-sites-bypass-token-file",
+            "StandardOutput.ReadToEnd",
+            "last_heartbeat_success_at",
+            "last_heartbeat_error",
+            "last_telemetry_success_at",
+            "last_telemetry_error",
+            "Get-DestinationError",
         ):
             self.assertIn(term, text)
+        self.assertNotIn("$standardError =", text)
+        self.assertNotIn("StandardError.ReadToEnd().Trim()", text)
 
     def test_installer_uses_one_logon_launch_and_never_schedules_heartbeat(self) -> None:
         text = INSTALLER.read_text(encoding="utf-8")
