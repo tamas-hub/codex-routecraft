@@ -153,16 +153,77 @@ class ControlCenterRuntimeTests(unittest.TestCase):
             self.assertEqual(6, row["agents_healthy"])
 
     def test_usage_adapter_uses_initialize_single_flight_exact_enums_and_percent_relation(self) -> None:
-        completed = mock.Mock(returncode=0, stdout='{"jsonrpc":"2.0","id":1,"result":{}}\n{"jsonrpc":"2.0","id":2,"result":{"rateLimits":{"windows":[{"kind":"fiveHour","remainingPercent":80,"resetSeconds":60},{"kind":"weekly","usedPercent":25,"resetSeconds":120}]}}}\n', stderr="")
+        class Pipe:
+            def __init__(self, lines=()):
+                self.lines = iter(lines)
+                self.writes: list[str] = []
+
+            def __iter__(self):
+                return self.lines
+
+            def write(self, value):
+                self.writes.append(value)
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+        class Process:
+            def __init__(self):
+                self.stdin = Pipe()
+                self.stdout = Pipe((
+                    '{"jsonrpc":"2.0","method":"account/update"}\n',
+                    '{"jsonrpc":"2.0","id":1,"result":{}}\n',
+                    '{"jsonrpc":"2.0","method":"some/notification"}\n',
+                    '{"jsonrpc":"2.0","id":2,"result":{"rateLimits":{"windows":[{"kind":"fiveHour","remainingPercent":80,"resetSeconds":60},{"kind":"weekly","usedPercent":25,"resetSeconds":120}]}}}\n',
+                ))
+
+            def poll(self): return None
+            def terminate(self): pass
+            def wait(self, timeout=None): return 0
+            def kill(self): pass
+
         runs = [{"input_tokens": 2, "cached_input_tokens": 3, "output_tokens": 5, "reasoning_output_tokens": 7, "actual_model": "gpt-5.6-sol"}]
-        with mock.patch.object(COLLECTOR.subprocess, "run", return_value=completed) as run:
+        process = Process()
+        with mock.patch.object(COLLECTOR.subprocess, "Popen", return_value=process) as popen:
             rows = COLLECTOR.usage_snapshots("a" * 32, "2026-08-24T00:00:00Z", runs, ["codex", "app-server"])
-        sent = run.call_args.kwargs["input"]
-        self.assertLess(sent.index('"method":"initialize"'), sent.index('"method":"account/rateLimits/read"'))
+        self.assertEqual(["codex", "app-server"], popen.call_args.args[0])
+        sent = "".join(process.stdin.writes)
+        self.assertLess(sent.index('"method":"initialize"'), sent.index('"method":"initialized"'))
+        self.assertLess(sent.index('"method":"initialized"'), sent.index('"method":"account/rateLimits/read"'))
         self.assertEqual({"five_hour", "weekly"}, {row["window_kind"] for row in rows})
         self.assertTrue(all(row["used_percent"] + row["remaining_percent"] == 100 for row in rows))
         self.assertEqual(2, rows[0]["input_tokens"])
         self.assertEqual(1, rows[0]["sol_runs"])
+
+    def test_usage_windows_normalizes_codex_primary_secondary_and_unix_reset(self) -> None:
+        result = {"rateLimits": {"primary": {"windowDurationMins": 300, "usedPercent": 12, "resetsAt": 1_800_000_000}, "secondary": {"windowDurationMins": 10080, "usedPercent": 88, "resetsAt": 1_800_600_000}}}
+        windows = COLLECTOR._usage_windows(result)
+        self.assertEqual({"fiveHour", "weekly"}, {window["kind"] for window in windows})
+        self.assertEqual("2027-01-15T08:00:00Z", COLLECTOR._reset_at(windows[0], "2026-08-24T00:00:00Z"))
+
+        fallback = {"rateLimitsByLimitId": {"other": {"primary": {"windowDurationMins": 300}}, "codex": result["rateLimits"]}}
+        self.assertEqual({"fiveHour", "weekly"}, {window["kind"] for window in COLLECTOR._usage_windows(fallback)})
+
+    def test_usage_adapter_selects_windows_codex_cmd_shim_by_default(self) -> None:
+        with mock.patch.object(COLLECTOR.os, "name", "nt"), mock.patch.dict(
+            "os.environ", {}, clear=True
+        ), mock.patch.object(
+            COLLECTOR.shutil, "which", side_effect=lambda name: "C:/npm/codex.cmd" if name == "codex.cmd" else None
+        ):
+            self.assertEqual(
+                ["cmd.exe", "/d", "/c", "C:/npm/codex.cmd", "app-server", "--stdio"],
+                COLLECTOR._default_app_server_command(),
+            )
+        with mock.patch.dict(
+            "os.environ", {"ROUTECRAFT_CODEX_APP_SERVER": "C:/Codex/codex.exe"}, clear=True
+        ):
+            self.assertEqual(
+                ["C:/Codex/codex.exe", "app-server", "--stdio"],
+                COLLECTOR._default_app_server_command(),
+            )
 
     def test_validation_rejects_non_boolean_benchmark_measurement_and_unknown_keys(self) -> None:
         payload = COLLECTOR.fixture_payload()

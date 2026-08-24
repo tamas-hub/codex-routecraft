@@ -10,11 +10,14 @@ import hashlib
 import json
 import os
 import platform
+import queue
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Mapping
@@ -189,25 +192,102 @@ def _os_family() -> str:
 
 
 def _run_app_server(command: list[str]) -> Mapping[str, object]:
-    requests = (
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.6.0"}}},
-        {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}},
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
     )
-    completed = subprocess.run(command, input="".join(json.dumps(item, separators=(",", ":")) + "\n" for item in requests), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=12, check=False)
-    if completed.returncode:
-        raise RuntimeError("app_server_unavailable")
-    for line in reversed(completed.stdout.splitlines()):
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def read_output() -> None:
         try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict) and payload.get("id") == 2 and isinstance(payload.get("result"), dict):
-            return payload["result"]
-    raise RuntimeError("app_server_invalid_response")
+            if process.stdout is not None:
+                for line in process.stdout:
+                    lines.put(line)
+        finally:
+            lines.put(None)
+
+    threading.Thread(target=read_output, daemon=True).start()
+    deadline = time.monotonic() + 12
+
+    def send(payload: Mapping[str, object]) -> None:
+        if process.stdin is None:
+            raise RuntimeError("app_server_unavailable")
+        process.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        process.stdin.flush()
+
+    def receive(response_id: int) -> Mapping[str, object]:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("app_server_timeout")
+            try:
+                line = lines.get(timeout=remaining)
+            except queue.Empty as exc:
+                raise RuntimeError("app_server_timeout") from exc
+            if line is None:
+                raise RuntimeError("app_server_invalid_response")
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and payload.get("id") == response_id and isinstance(payload.get("result"), dict):
+                return payload["result"]
+
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.6.0"}}})
+        receive(1)
+        send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        send({"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}})
+        return receive(2)
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=1)
+
+
+def _default_app_server_command() -> list[str]:
+    configured = os.environ.get("ROUTECRAFT_CODEX_APP_SERVER", "").strip()
+    if configured:
+        return [configured, "app-server", "--stdio"]
+    if os.name == "nt":
+        shim = shutil.which("codex.cmd")
+        if shim:
+            return ["cmd.exe", "/d", "/c", shim, "app-server", "--stdio"]
+        native = shutil.which("codex.exe")
+        if native:
+            return [native, "app-server", "--stdio"]
+        return ["cmd.exe", "/d", "/c", "codex.cmd", "app-server", "--stdio"]
+    return ["codex", "app-server", "--stdio"]
 
 
 def _usage_windows(result: Mapping[str, object]) -> list[Mapping[str, object]]:
     root: object = result.get("rateLimits", result.get("rate_limits", result))
+    if not isinstance(root, Mapping):
+        return []
+    by_limit = root.get("rateLimitsByLimitId")
+    if isinstance(by_limit, Mapping):
+        root = by_limit.get("codex", {})
+    if isinstance(root, Mapping) and all(key in root for key in ("primary", "secondary")):
+        output: list[Mapping[str, object]] = []
+        for key in ("primary", "secondary"):
+            value = root.get(key)
+            if isinstance(value, Mapping):
+                duration = value.get("windowDurationMins")
+                kind = "fiveHour" if duration == 300 else "weekly" if duration == 10080 else value.get("kind", value.get("windowKind", key))
+                output.append({**value, "kind": kind})
+        return output
     if not isinstance(root, Mapping):
         return []
     if isinstance(root.get("windows"), list):
@@ -226,6 +306,8 @@ def _reset_at(window: Mapping[str, object], now: str) -> str | None:
         if parsed:
             return parsed
     try:
+        if isinstance(window.get("resetsAt"), (int, float)):
+            return datetime.fromtimestamp(window["resetsAt"], timezone.utc).isoformat().replace("+00:00", "Z")
         seconds = max(0, int(window.get("resetSeconds", window.get("reset_seconds"))))
         return (datetime.fromisoformat(now.replace("Z", "+00:00")) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
     except (TypeError, ValueError):
@@ -257,7 +339,7 @@ def usage_snapshots(device_id: str, observed_at: str, runs: list[Mapping[str, ob
     """
     with _USAGE_LOCK:
         try:
-            result = _run_app_server(command or [os.environ.get("ROUTECRAFT_CODEX_APP_SERVER", "codex"), "app-server"])
+            result = _run_app_server(command or _default_app_server_command())
             aggregates = _run_aggregates(runs)
             records: list[dict[str, object]] = []
             for window in _usage_windows(result):
