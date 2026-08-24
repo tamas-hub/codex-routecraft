@@ -219,7 +219,7 @@ class RouteCraftService:
             raise
         out=self.get_project(item["id"]); out["warnings"]=warnings; return out
     def list_projects(self,include_archived=False):
-        self.initialize(); sql="SELECT * FROM projects"+("" if include_archived else " WHERE archived=0")+" ORDER BY updated_at DESC,name"
+        self.initialize(); sql="SELECT * FROM projects"+("" if include_archived else " WHERE archived=0")+" ORDER BY updated_at DESC,name"  # routecraft-security: allowlisted-sql-shape
         with self.db.connect() as db:return [_row(r) for r in db.execute(sql)]
     def get_project(self,ref): return self._project(ref)
     def find_project_by_repo(self,repo_path,include_archived=False):
@@ -409,7 +409,7 @@ class RouteCraftService:
         if created_to: where.append("m.created_at<=?"); base_args.append(str(created_to))
         candidates={}; fts_ranks={}; fts_expression=_fts_query(q) if q else ""
         if fts_expression and self._fts():
-            sql="SELECT m.*,bm25(memories_fts) AS fts_rank FROM memories_fts JOIN memories m ON m.id=memories_fts.memory_id WHERE memories_fts MATCH ? AND "+" AND ".join(where)
+            sql="SELECT m.*,bm25(memories_fts) AS fts_rank FROM memories_fts JOIN memories m ON m.id=memories_fts.memory_id WHERE memories_fts MATCH ? AND "+" AND ".join(where)  # routecraft-security: allowlisted-sql-shape
             with self.db.connect() as db:
                 for record in db.execute(sql,[fts_expression,*base_args]):
                     item=_row(record); fts_ranks[item["id"]]=float(record["fts_rank"]); candidates[item["id"]]=item
@@ -419,7 +419,7 @@ class RouteCraftService:
             for term in terms:
                 term_clauses.append("(instr(lower(m.title),lower(?))>0 OR instr(lower(m.body),lower(?))>0 OR instr(lower(m.tags),lower(?))>0)"); fallback_args.extend((term,term,term))
             fallback_where.append(" AND ".join(term_clauses))
-        sql="SELECT m.* FROM memories m WHERE "+" AND ".join(fallback_where)
+        sql="SELECT m.* FROM memories m WHERE "+" AND ".join(fallback_where)  # routecraft-security: allowlisted-sql-shape
         with self.db.connect() as db:
             for record in db.execute(sql,fallback_args):
                 item=_row(record); candidates.setdefault(item["id"],item)

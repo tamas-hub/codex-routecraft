@@ -150,11 +150,12 @@ function Save-Status {
         last_telemetry_error = $script:lastTelemetryError
         destinations = [ordered]@{
             heartbeat = [ordered]@{
+                configured = ($config.legacy_heartbeat_enabled -ne $false)
                 last_success_at = $script:lastHeartbeatSuccess
                 last_error = $script:lastHeartbeatError
             }
             telemetry = [ordered]@{
-                configured = [bool]$config.telemetry_endpoint
+                configured = ([bool]$config.control_center_enabled -and [bool]$config.telemetry_endpoint)
                 last_success_at = $script:lastTelemetrySuccess
                 last_error = $script:lastTelemetryError
             }
@@ -172,32 +173,32 @@ function Update-TrayState([ValidateSet('on', 'off', 'error', 'sending')][string]
     switch ($State) {
         'off' {
             $notifyIcon.Icon = $icons.off
-            $statusItem.Text = 'Heartbeat: OFF'
-            $toggleItem.Text = 'Heartbeatを再開'
-            Set-NotifyText 'RouteCraft Heartbeat: OFF'
+            $statusItem.Text = 'Collector: OFF'
+            $toggleItem.Text = 'Collectorを再開'
+            Set-NotifyText 'RouteCraft Collector: OFF'
         }
         'error' {
             $notifyIcon.Icon = $icons.error
             $failed = @()
-            if ($script:lastHeartbeatError) { $failed += 'Xserver' }
-            if ($config.telemetry_endpoint -and $script:lastTelemetryError) { $failed += 'GPT Sites' }
+            if ($config.legacy_heartbeat_enabled -ne $false -and $script:lastHeartbeatError) { $failed += 'Legacy Observatory' }
+            if ($config.control_center_enabled -and $config.telemetry_endpoint -and $script:lastTelemetryError) { $failed += 'Control Center' }
             $failedLabel = if ($failed.Count -gt 0) { ': ' + ($failed -join ' / ') } else { '' }
-            $statusItem.Text = "Heartbeat: ON（送信エラー$failedLabel）"
-            $toggleItem.Text = 'Heartbeatを停止'
-            Set-NotifyText "RouteCraft Heartbeat: 送信エラー$failedLabel"
+            $statusItem.Text = "Collector: ON（送信エラー$failedLabel）"
+            $toggleItem.Text = 'Collectorを停止'
+            Set-NotifyText "RouteCraft Collector: 送信エラー$failedLabel"
         }
         'sending' {
             $notifyIcon.Icon = $icons.on
-            $statusItem.Text = 'Heartbeat: ON（送信中）'
-            $toggleItem.Text = 'Heartbeatを停止'
-            Set-NotifyText 'RouteCraft Heartbeat: ON / 送信中'
+            $statusItem.Text = 'Collector: ON（送信中）'
+            $toggleItem.Text = 'Collectorを停止'
+            Set-NotifyText 'RouteCraft Collector: ON / 送信中'
         }
         default {
             $notifyIcon.Icon = $icons.on
-            $statusItem.Text = 'Heartbeat: ON'
-            $toggleItem.Text = 'Heartbeatを停止'
+            $statusItem.Text = 'Collector: ON'
+            $toggleItem.Text = 'Collectorを停止'
             $last = if ($script:lastSuccess) { ([DateTime]$script:lastSuccess).ToLocalTime().ToString('HH:mm') } else { '未送信' }
-            Set-NotifyText "RouteCraft Heartbeat: ON / 最終成功 $last"
+            Set-NotifyText "RouteCraft Collector: ON / 最終成功 $last"
         }
     }
     if ($oldIcon -and $oldIcon -notin $icons.Values) {
@@ -229,22 +230,32 @@ function Start-Heartbeat {
         $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
+        $startInfo.Environment['CONTROL_CENTER_ENABLED'] = if ([bool]$config.control_center_enabled) { 'true' } else { 'false' }
         [void]$startInfo.ArgumentList.Add($config.heartbeat_script)
-        [void]$startInfo.ArgumentList.Add('--endpoint')
-        [void]$startInfo.ArgumentList.Add($config.endpoint)
-        [void]$startInfo.ArgumentList.Add('--token-file')
-        [void]$startInfo.ArgumentList.Add($config.token_file)
+        if ($config.legacy_heartbeat_enabled -ne $false) {
+            [void]$startInfo.ArgumentList.Add('--endpoint')
+            [void]$startInfo.ArgumentList.Add($config.endpoint)
+            [void]$startInfo.ArgumentList.Add('--token-file')
+            [void]$startInfo.ArgumentList.Add($config.token_file)
+        }
+        else {
+            [void]$startInfo.ArgumentList.Add('--disable-legacy-heartbeat')
+        }
         if ($config.alias) {
             [void]$startInfo.ArgumentList.Add('--alias')
             [void]$startInfo.ArgumentList.Add($config.alias)
         }
-        if ($config.telemetry_endpoint) {
+        if ($config.control_center_enabled -and $config.telemetry_endpoint) {
             [void]$startInfo.ArgumentList.Add('--telemetry-endpoint')
             [void]$startInfo.ArgumentList.Add($config.telemetry_endpoint)
             [void]$startInfo.ArgumentList.Add('--telemetry-token-file')
             [void]$startInfo.ArgumentList.Add($config.telemetry_token_file)
             [void]$startInfo.ArgumentList.Add('--telemetry-script')
             [void]$startInfo.ArgumentList.Add($config.telemetry_script)
+            if ($config.unified_collector_script) {
+                [void]$startInfo.ArgumentList.Add('--unified-collector-script')
+                [void]$startInfo.ArgumentList.Add($config.unified_collector_script)
+            }
             [void]$startInfo.ArgumentList.Add('--telemetry-since-days')
             [void]$startInfo.ArgumentList.Add([string]$config.telemetry_since_days)
             if ($config.telemetry_sites_bypass_token_file) {
@@ -267,8 +278,8 @@ function Start-Heartbeat {
             $script:heartbeatProcess = $null
         }
         $script:lastError = '送信処理を起動できませんでした。'
-        $script:lastHeartbeatError = $script:lastError
-        if ($config.telemetry_endpoint) { $script:lastTelemetryError = '送信処理を開始できませんでした。' }
+        if ($config.legacy_heartbeat_enabled -ne $false) { $script:lastHeartbeatError = $script:lastError }
+        if ($config.control_center_enabled -and $config.telemetry_endpoint) { $script:lastTelemetryError = '送信処理を開始できませんでした。' }
         Update-TrayState 'error'
     }
 }
@@ -296,27 +307,33 @@ function Complete-Heartbeat {
     }
 
     $completedAt = [DateTime]::UtcNow.ToString('o')
-    if ($result -and $result.heartbeat -and [bool]$result.heartbeat.ok) {
+    if ($config.legacy_heartbeat_enabled -eq $false) {
+        $script:lastHeartbeatError = $null
+    }
+    elseif ($result -and $result.heartbeat -and [bool]$result.heartbeat.ok) {
         $script:lastHeartbeatSuccess = $completedAt
         $script:lastHeartbeatError = $null
     }
     elseif ($result -and $result.heartbeat) {
-        $script:lastHeartbeatError = Get-DestinationError $result.heartbeat 'Xserver'
+        $script:lastHeartbeatError = Get-DestinationError $result.heartbeat 'Legacy Observatory'
     }
     else {
-        $script:lastHeartbeatError = 'Xserver: 結果を取得できませんでした'
+        $script:lastHeartbeatError = 'Legacy Observatory: 結果を取得できませんでした'
     }
 
-    if ($config.telemetry_endpoint) {
+    if (-not $config.control_center_enabled) {
+        $script:lastTelemetryError = $null
+    }
+    elseif ($config.telemetry_endpoint) {
         if ($result -and $result.telemetry -and [bool]$result.telemetry.ok) {
             $script:lastTelemetrySuccess = $completedAt
             $script:lastTelemetryError = $null
         }
         elseif ($result -and $result.telemetry) {
-            $script:lastTelemetryError = Get-DestinationError $result.telemetry 'GPT Sites'
+            $script:lastTelemetryError = Get-DestinationError $result.telemetry 'Control Center'
         }
         else {
-            $script:lastTelemetryError = 'GPT Sites: 結果を取得できませんでした'
+            $script:lastTelemetryError = 'Control Center: 結果を取得できませんでした'
         }
     }
 
@@ -365,7 +382,7 @@ $script:lastSuccess = if ($previousStatus) { $previousStatus.last_success_at } e
 $script:lastError = $null
 $script:lastHeartbeatSuccess = if ($previousStatus -and $previousStatus.last_heartbeat_success_at) { $previousStatus.last_heartbeat_success_at } elseif ($previousStatus) { $previousStatus.last_success_at } else { $null }
 $script:lastHeartbeatError = $null
-$script:lastTelemetrySuccess = if ($previousStatus -and $previousStatus.last_telemetry_success_at) { $previousStatus.last_telemetry_success_at } elseif ($previousStatus -and $config.telemetry_endpoint) { $previousStatus.last_success_at } else { $null }
+$script:lastTelemetrySuccess = if ($previousStatus -and $previousStatus.last_telemetry_success_at) { $previousStatus.last_telemetry_success_at } elseif ($previousStatus -and $config.control_center_enabled -and $config.telemetry_endpoint) { $previousStatus.last_success_at } else { $null }
 $script:lastTelemetryError = $null
 $script:heartbeatProcess = $null
 $script:nextDue = [DateTime]::UtcNow
@@ -376,11 +393,11 @@ $icons = @{
     error = New-StatusIcon ([System.Drawing.Color]::FromArgb(255, 230, 139, 34))
 }
 $contextMenu = [System.Windows.Forms.ContextMenuStrip]::new()
-$statusItem = [System.Windows.Forms.ToolStripMenuItem]::new('Heartbeat: 起動中')
+$statusItem = [System.Windows.Forms.ToolStripMenuItem]::new('Collector: 起動中')
 $statusItem.Enabled = $false
 $sendNowItem = [System.Windows.Forms.ToolStripMenuItem]::new('今すぐ送信')
-$toggleItem = [System.Windows.Forms.ToolStripMenuItem]::new('Heartbeatを停止')
-$dashboardItem = [System.Windows.Forms.ToolStripMenuItem]::new('Observatoryを開く')
+$toggleItem = [System.Windows.Forms.ToolStripMenuItem]::new('Collectorを停止')
+$dashboardItem = [System.Windows.Forms.ToolStripMenuItem]::new('Control Centerを開く')
 $exitItem = [System.Windows.Forms.ToolStripMenuItem]::new('トレイ常駐を終了')
 [void]$contextMenu.Items.Add($statusItem)
 [void]$contextMenu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())

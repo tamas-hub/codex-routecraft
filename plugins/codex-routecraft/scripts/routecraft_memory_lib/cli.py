@@ -20,7 +20,7 @@ def installed_plugin_version() -> str:
         value = json.loads(manifest.read_text(encoding="utf-8")).get("version")
     except (OSError, json.JSONDecodeError, AttributeError):
         value = None
-    return str(value or "0.5.1")
+    return str(value or "0.6.0")
 
 
 def build_parser() -> argparse.ArgumentParser:

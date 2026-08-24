@@ -61,10 +61,32 @@ class RouteCraftObservatoryTests(unittest.TestCase):
             telemetry_endpoint="https://telemetry.example.invalid/api",
             telemetry_token_file=str(token_file),
             telemetry_script="routecraft_telemetry.py",
+            unified_collector_script="routecraft_control_center.py",
             telemetry_sites_bypass_token_file=None,
             telemetry_since_days=30,
             telemetry_include_legacy=False,
+            legacy_heartbeat_enabled=True,
         )
+
+    def test_telemetry_only_runs_the_optional_unified_collector_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = self.delivery_args(Path(tmp) / "token.txt")
+            args.telemetry_sites_bypass_token_file = str(Path(tmp) / "sites-bypass.txt")
+            with mock.patch.object(OBS, "_run_collector", return_value={"ok": True}) as run, mock.patch.dict(
+                "os.environ", {"CONTROL_CENTER_ENABLED": "true"}, clear=False
+            ):
+                OBS.send_telemetry(args)
+            command = run.call_args.args[0]
+            self.assertIn("routecraft_control_center.py", command)
+            self.assertNotIn("routecraft_telemetry.py", command)
+            self.assertIn("--sites-bypass-token-file", command)
+
+            with mock.patch.object(OBS, "_run_collector", return_value={"ok": True}) as run, mock.patch.dict(
+                "os.environ", {"CONTROL_CENTER_ENABLED": "false"}, clear=False
+            ):
+                result = OBS.send_telemetry(args)
+            self.assertEqual({"ok": True, "delivered": False, "state": "disabled"}, result)
+            run.assert_not_called()
 
     def test_heartbeat_failure_does_not_block_telemetry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -89,6 +111,25 @@ class RouteCraftObservatoryTests(unittest.TestCase):
             self.assertEqual(result["heartbeat"]["http_status"], 400)
             self.assertEqual(result["heartbeat"]["detail"], "invalid evaluation.schema_version")
             self.assertTrue(result["telemetry"]["ok"])
+
+    def test_telemetry_only_skips_legacy_heartbeat_and_main_does_not_return_early(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = self.delivery_args(Path(tmp) / "token.txt")
+            args.legacy_heartbeat_enabled = False
+            args.endpoint = None
+            args.token_file = None
+            with mock.patch.object(OBS, "send") as heartbeat, mock.patch.object(OBS, "send_telemetry", return_value={"ok": True, "accepted": 1}) as telemetry:
+                result = OBS.deliver(args, {"schema_version": 2})
+            heartbeat.assert_not_called()
+            telemetry.assert_called_once()
+            self.assertTrue(result["ok"])
+            self.assertNotIn("heartbeat", result)
+
+        output = io.StringIO()
+        with mock.patch.object(OBS, "build_payload", return_value={"schema_version": 2}), mock.patch.object(OBS, "deliver", return_value={"ok": True, "telemetry": {"ok": True}}) as deliver, contextlib.redirect_stdout(output):
+            exit_code = OBS.main(["--disable-legacy-heartbeat", "--telemetry-endpoint", "https://telemetry.example.invalid/api", "--telemetry-token-file", "token", "--telemetry-script", "legacy.py", "--unified-collector-script", "unified.py"])
+        self.assertEqual(0, exit_code)
+        self.assertTrue(deliver.called)
 
     def test_unreadable_http_error_body_does_not_block_telemetry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

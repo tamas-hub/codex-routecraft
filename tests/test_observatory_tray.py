@@ -14,20 +14,25 @@ UNINSTALLER = SCRIPTS / "uninstall-observatory-tray.ps1"
 class ObservatoryTrayContractTests(unittest.TestCase):
     def test_tray_is_visible_and_heartbeat_child_has_no_window(self) -> None:
         text = TRAY.read_text(encoding="utf-8")
+        self.assertTrue(any(term in text for term in ("Heartbeat: ON", "Collector: ON")))
+        self.assertTrue(any(term in text for term in ("Heartbeat: OFF", "Collector: OFF")))
         for term in (
             "System.Windows.Forms.NotifyIcon",
-            "Heartbeat: ON",
-            "Heartbeat: OFF",
             "CreateNoWindow = $true",
             "ProcessWindowStyle]::Hidden",
             "今すぐ送信",
-            "Heartbeatを停止",
-            "Heartbeatを再開",
+            "Collector: ON",
+            "Collector: OFF",
             "Set-HeartbeatEnabled",
             "RouteCraftObservatoryTrayEnable",
             "RouteCraftObservatoryTrayDisable",
             "--telemetry-endpoint",
+            "--unified-collector-script",
             "--telemetry-sites-bypass-token-file",
+            "CONTROL_CENTER_ENABLED",
+            "control_center_enabled",
+            "legacy_heartbeat_enabled",
+            "--disable-legacy-heartbeat",
             "StandardOutput.ReadToEnd",
             "last_heartbeat_success_at",
             "last_heartbeat_error",
@@ -46,7 +51,17 @@ class ObservatoryTrayContractTests(unittest.TestCase):
         self.assertIn("-WindowStyle Hidden", text)
         self.assertIn("scheduled_task_created = $false", text)
         self.assertIn("routecraft_telemetry.py", text)
+        self.assertIn("routecraft_collector.py", text)
+        self.assertIn("routecraft_control_center.py", text)
         self.assertIn("TelemetrySitesBypassTokenFile", text)
+        self.assertIn("EnableControlCenter", text)
+        self.assertIn("DisableLegacyHeartbeat", text)
+        self.assertIn("$PSBoundParameters.ContainsKey('EnableControlCenter')", text)
+        self.assertIn("$PSBoundParameters.ContainsKey('DisableLegacyHeartbeat')", text)
+        self.assertIn("control_center_enabled = $controlCenterEnabled", text)
+        self.assertIn("legacy_heartbeat_enabled = $legacyHeartbeatEnabled", text)
+        self.assertIn("$previousConfig.PSObject.Properties['control_center_enabled']", text)
+        self.assertIn("$previousConfig.PSObject.Properties['legacy_heartbeat_enabled']", text)
         forbidden = ("Register-ScheduledTask", "New-ScheduledTask", "schtasks.exe", "schtasks ")
         self.assertFalse(any(term in text for term in forbidden))
 

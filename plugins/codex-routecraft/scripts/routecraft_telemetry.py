@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-SAFE_TOKEN = re.compile(r"^[A-Za-z0-9._+:/-]{1,80}$")
+SAFE_TOKEN = re.compile(r"^[A-Za-z0-9._+-]{1,80}$")
 SAFE_SUMMARY = re.compile(r"^[\w +＋・、。！？!?（）()【】「」：:\-]{1,80}$", re.UNICODE)
 FORBIDDEN_SUMMARY = re.compile(
     r"(?:\b(?:api[_ -]?key|access[_ -]?token|token|secret|password|credential|private[_ -]?key)\b|\bkey\s*:|APIキー|トークン|秘密鍵|秘密|パスワード|認証情報|\b(?:CASE|CAND|RULE|EVAL)-[A-Z0-9-]+\b|\b[0-9a-f]{32,64}\b|\b[0-9a-f]{8}-[0-9a-f-]{27,36}\b|[A-Za-z]:[\\/]|/(?:Users|home)/)",

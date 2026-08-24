@@ -165,20 +165,28 @@ def failure_result(destination: str, exc: Exception) -> dict:
     return result
 
 def send_telemetry(args: argparse.Namespace) -> dict:
+    # The Control Center is an optional product boundary.  Its disabled or
+    # unset configuration is a supported local-only state: never invoke either
+    # the v3 adapter or the former v2 telemetry process in that state.  The
+    # legacy heartbeat below remains governed by its separate setting.
+    if os.environ.get("CONTROL_CENTER_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return {"ok": True, "delivered": False, "state": "disabled"}
+    if not args.unified_collector_script:
+        raise DeliveryError("configuration_error", "unified collector is not configured")
     command = [
         sys.executable,
-        str(Path(args.telemetry_script).expanduser()),
+        str(Path(args.unified_collector_script).expanduser()),
         "--endpoint",
         args.telemetry_endpoint,
         "--token-file",
         str(Path(args.telemetry_token_file).expanduser()),
-        "--since-days",
-        str(args.telemetry_since_days),
     ]
     if args.telemetry_sites_bypass_token_file:
         command.extend(["--sites-bypass-token-file", str(Path(args.telemetry_sites_bypass_token_file).expanduser())])
-    if args.telemetry_include_legacy:
-        command.append("--include-legacy")
+    return _run_collector(command)
+
+
+def _run_collector(command: list[str]) -> dict:
     process = subprocess.run(
         command,
         stdout=subprocess.PIPE,
@@ -208,15 +216,18 @@ def send_telemetry(args: argparse.Namespace) -> dict:
 
 def deliver(args: argparse.Namespace, payload: dict) -> dict:
     result: dict = {"ok": True}
-    try:
-        token = read_token(args.token_file, "heartbeat")
-        heartbeat = send(args.endpoint, token, payload)
-        if not isinstance(heartbeat, dict) or not heartbeat.get("ok"):
-            raise DeliveryError("invalid_response", "heartbeat endpoint returned an invalid result")
-        result["heartbeat"] = heartbeat
-    except Exception as exc:
-        result["ok"] = False
-        result["heartbeat"] = failure_result("heartbeat", exc)
+    if getattr(args, "legacy_heartbeat_enabled", True):
+        try:
+            token = read_token(args.token_file, "heartbeat")
+            if not args.endpoint:
+                raise DeliveryError("configuration_error", "heartbeat endpoint is not configured")
+            heartbeat = send(args.endpoint, token, payload)
+            if not isinstance(heartbeat, dict) or not heartbeat.get("ok"):
+                raise DeliveryError("invalid_response", "heartbeat endpoint returned an invalid result")
+            result["heartbeat"] = heartbeat
+        except Exception as exc:
+            result["ok"] = False
+            result["heartbeat"] = failure_result("heartbeat", exc)
 
     if args.telemetry_endpoint:
         try:
@@ -238,12 +249,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--telemetry-token-file")
     ap.add_argument("--telemetry-sites-bypass-token-file")
     ap.add_argument("--telemetry-script")
+    ap.add_argument("--unified-collector-script")
     ap.add_argument("--telemetry-since-days", type=int, default=30)
     ap.add_argument("--telemetry-include-legacy", action="store_true")
+    ap.add_argument("--disable-legacy-heartbeat", action="store_true")
     ap.add_argument("--print",action="store_true",dest="print_only")
     a=ap.parse_args(argv)
+    a.legacy_heartbeat_enabled = not a.disable_legacy_heartbeat
     p=build_payload(a.alias)
-    if a.print_only or not a.endpoint:
+    if a.print_only or (not a.endpoint and not a.telemetry_endpoint):
         print(json.dumps(p,ensure_ascii=False,indent=2)); return 0
     result = deliver(a, p)
     print(json.dumps(result,ensure_ascii=False))

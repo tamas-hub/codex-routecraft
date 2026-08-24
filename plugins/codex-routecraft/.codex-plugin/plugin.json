@@ -1,7 +1,7 @@
 {
   "name": "codex-routecraft",
-  "version": "0.5.1+codex.20260823165811",
-  "description": "Sol-led adaptive Codex orchestration with verified source control, reusable decision memory, and opt-in local project continuity.",
+  "version": "0.6.0+codex.20260824045541",
+  "description": "Unified RouteCraft Local Runtime for orchestration, hooks, agents, memory adapters, context compilation, quality checks, and optional Control Center telemetry.",
   "author": {
     "name": "tamas-hub",
     "url": "https://github.com/tamas-hub"
@@ -27,8 +27,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "RouteCraft for Codex",
-    "shortDescription": "Adaptive Sol-led routing, persistent decision memory, and measurable reuse.",
-    "longDescription": "RouteCraft keeps GPT-5.6 Sol as architect and acceptance owner, defaults to solo execution, and delegates only when a cheaper lane can safely substitute for root implementation. It routes bounded work to Luna, judgment-heavy work to Terra, parallelizes independent workstreams, and requests fresh Sol review for high-risk changes. Its Persistent Decision Layer keeps reusable verified cases and rules in a separate private store. An opt-in Memory Local bridge can inject bounded registered-project context and save a Git-metadata summary without reading transcripts. The parent always verifies current evidence before acceptance.",
+    "shortDescription": "Unified local routing, memory, context, quality, and optional Control Center telemetry.",
+    "longDescription": "RouteCraft for Codex is the unified Local Runtime for Sol-led routing, bounded companion-agent delegation, hooks, local project continuity, private reusable decisions, context compilation, diagnostics, benchmark execution, and safe security checks. Core behavior remains fully supported without the separately versioned RouteCraft Control Center Add-on. When explicitly enabled, the privacy-filtered Collector sends only versioned aggregate telemetry; Control Center downtime never blocks routing, hooks, agents, memory, context compilation, benchmark execution, or security scans.",
     "developerName": "tamas-hub",
     "category": "Productivity",
     "capabilities": [
@@ -39,8 +39,7 @@
     "defaultPrompt": [
       "Use $codex-routecraft:orchestration to build this feature with adaptive routing, bounded memory recall, verification, reusable learning, and local effectiveness measurement when enabled.",
       "Use RouteCraft to recall relevant prior decisions, choose the cheapest safe lane, implement this change, and verify the complete diff.",
-      "Use RouteCraft for this task; parallelize only independent work, add fresh Sol review only when risk warrants it, and preserve verified reusable decisions.",
-      "Use $codex-routecraft:memory to inspect, validate, recall, or synchronize my private RouteCraft decision store."
+      "Use RouteCraft for this task; parallelize only independent work, add fresh Sol review only when risk warrants it, and preserve verified reusable decisions."
     ]
   }
 }

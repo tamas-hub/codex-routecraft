@@ -21,7 +21,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-VERSION = "0.4.0"
+VERSION = "0.6.0"
 FLEET_SCHEMA = 1
 LAYOUT_VERSION = 1
 SOURCE_REMOTE = "https://github.com/tamas-hub/codex-routecraft.git"

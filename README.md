@@ -1,6 +1,6 @@
 # RouteCraft for Codex
 
-## RouteCraft Memory Local v1.0
+## RouteCraft Local Runtime 0.6.0
 
 This repository also contains RouteCraft Memory Local, a separate standard-library-only local product for carrying structured project decisions, failures, constraints, important files, and next actions across AI coding sessions. It uses a local SQLite database, Japanese-capable search, bounded Context Packs, six-file Handoff Packs, read-only Git metadata, confirmed backup/restore, and a Japanese-first Web UI bound only to `127.0.0.1`.
 
@@ -21,7 +21,21 @@ Python 3.11+ is required. Git is optional and used only for read-only repository
 
 RouteCraft is a Codex plugin/skill for software-delivery orchestration across the GPT-5.6 family. The primary Sol session owns architecture and acceptance. Bounded implementation can move to Luna, judgment-heavy implementation can move to Terra, and high-risk changes can receive a fresh Sol review.
 
-V0.5.1 adds an explicitly opt-in, windowless Windows notification-area host for Observatory heartbeat. It starts once at sign-in, sends from the long-lived background process, and shows green ON, gray OFF, or orange delivery-error state in a small tray icon. It does not create a five-minute Scheduled Task, and the tray context menu provides pause/resume and send-now controls.
+V0.6.0 adds a local-first Unified Collector (schema v3), Context Engine, conservative AGENTS optimizer, deterministic Benchmark Lab, Security Hardener, and additive doctor/update/migrate surfaces. Control Center transport remains optional: when `CONTROL_CENTER_ENABLED` is absent or false, core modules do not import it and no outbound delivery is attempted.
+
+### Product boundary and sources of truth
+
+RouteCraft Local Runtime and the Control Center Add-on keep separate repository, package, version, and licensing boundaries. Their only connection is the versioned schema-v3 JSON contract. Control Center downtime, an absent subscription, or delivery failure cannot block routing, hooks, agents, either memory store, context compilation, benchmarks, or local security scans.
+
+| Surface | Source of truth | Durable state | Optional external view |
+| --- | --- | --- | --- |
+| Routing / Hooks / Agents / Collector | `codex-routecraft` | device-local configuration | schema-v3 aggregates |
+| Project memory | RouteCraft Memory Local | local SQLite | aggregate counts only |
+| Reusable decisions | Private Decision Store | separate private Git store | aggregate counts only |
+| Benchmark / Security | local engine plus adapter | local report | aggregate summary only |
+| Control Center UI / API / D1 | Control Center repository | existing Sites D1 | owner-only Site |
+
+Memory Local and the Decision Store remain physically separate. The Context Engine ranks, deduplicates, and budget-compiles only the relevant adapter output.
 
 The bundled `routecraft_telemetry.py` collector maps the model and reasoning effort selected for the human-started parent task to the model and effort that actually ran in each child. Schema v2 may also export a fixed task class, an explicitly authored privacy-safe summary, and Recall/usefulness/Learn state from an exact assistant marker. It never derives those fields from the user prompt; workspace paths, filenames, task paths, record IDs, credentials, and raw session IDs are excluded.
 The existing tray installer can opt the collector into the heartbeat schedule, including a separate GPT Sites bypass-token file for a private dashboard. Pausing the tray pauses both heartbeat and telemetry, and the intentional OFF state survives reinstall.

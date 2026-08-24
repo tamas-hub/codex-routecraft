@@ -1,10 +1,8 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('^https://')]
     [string]$Endpoint,
 
-    [Parameter(Mandatory = $true)]
     [string]$TokenFile,
 
     [string]$Alias = $env:COMPUTERNAME,
@@ -13,7 +11,7 @@ param(
     [int]$IntervalSeconds = 300,
 
     [ValidatePattern('^https://')]
-    [string]$DashboardUrl = 'https://tama-hub.xvps.jp/observatory/',
+    [string]$DashboardUrl,
 
     [ValidatePattern('^https://')]
     [string]$TelemetryEndpoint,
@@ -27,15 +25,47 @@ param(
 
     [switch]$TelemetryIncludeLegacy,
 
+    [switch]$EnableControlCenter,
+
+    [switch]$DisableLegacyHeartbeat,
+
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'RouteCraft Observatory Tray')
 )
 
 $ErrorActionPreference = 'Stop'
+$modeConfigPath = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot 'observatory-tray.json'))
+$previousConfig = $null
+if (Test-Path -LiteralPath $modeConfigPath -PathType Leaf) {
+    try {
+        $previousConfig = Get-Content -Raw -LiteralPath $modeConfigPath | ConvertFrom-Json
+    }
+    catch {
+        throw "既存設定を読み取れません: $modeConfigPath"
+    }
+}
+$legacyHeartbeatEnabled = $true
+if ($previousConfig -and $previousConfig.PSObject.Properties['legacy_heartbeat_enabled']) {
+    $legacyHeartbeatEnabled = [bool]$previousConfig.legacy_heartbeat_enabled
+}
+if ($PSBoundParameters.ContainsKey('DisableLegacyHeartbeat')) {
+    $legacyHeartbeatEnabled = -not [bool]$DisableLegacyHeartbeat
+}
+if (-not $DashboardUrl) {
+    if ($previousConfig -and $previousConfig.dashboard_url) {
+        $DashboardUrl = [string]$previousConfig.dashboard_url
+    }
+    elseif ($TelemetryEndpoint) {
+        $telemetryUri = [System.Uri]$TelemetryEndpoint
+        $DashboardUrl = $telemetryUri.GetLeftPart([System.UriPartial]::Authority) + '/'
+    }
+}
 $traySource = Join-Path $PSScriptRoot 'routecraft_observatory_tray.ps1'
 $heartbeatSource = Join-Path $PSScriptRoot 'routecraft_observatory.py'
 $telemetrySource = Join-Path $PSScriptRoot 'routecraft_telemetry.py'
+$unifiedCollectorSource = Join-Path $PSScriptRoot 'routecraft_control_center.py'
+$collectorSource = Join-Path $PSScriptRoot 'routecraft_collector.py'
 
-foreach ($source in @($traySource, $heartbeatSource, $telemetrySource)) {
+foreach ($source in @($traySource, $heartbeatSource, $telemetrySource, $unifiedCollectorSource, $collectorSource)) {
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
         throw "インストール元ファイルがありません: $source"
     }
@@ -45,10 +75,16 @@ if (($TelemetryEndpoint -and -not $TelemetryTokenFile) -or ($TelemetryTokenFile 
     throw 'TelemetryEndpointとTelemetryTokenFileは一緒に指定してください。'
 }
 
-$resolvedTokenFile = (Resolve-Path -LiteralPath $TokenFile).Path
-$tokenLength = (Get-Content -Raw -LiteralPath $resolvedTokenFile).Trim().Length
-if ($tokenLength -lt 32) {
-    throw 'Heartbeat tokenが短すぎます。'
+$resolvedTokenFile = $null
+if ($legacyHeartbeatEnabled) {
+    if (-not $Endpoint -or -not $TokenFile) {
+        throw 'Legacy heartbeatが有効な場合はEndpointとTokenFileが必要です。'
+    }
+    $resolvedTokenFile = (Resolve-Path -LiteralPath $TokenFile).Path
+    $tokenLength = (Get-Content -Raw -LiteralPath $resolvedTokenFile).Trim().Length
+    if ($tokenLength -lt 32) {
+        throw 'Heartbeat tokenが短すぎます。'
+    }
 }
 
 $resolvedTelemetryTokenFile = $null
@@ -84,6 +120,8 @@ if (-not (Test-Path -LiteralPath $installDirectory)) {
 $trayDestination = Join-Path $installDirectory 'routecraft_observatory_tray.ps1'
 $heartbeatDestination = Join-Path $installDirectory 'routecraft_observatory.py'
 $telemetryDestination = Join-Path $installDirectory 'routecraft_telemetry.py'
+$unifiedCollectorDestination = Join-Path $installDirectory 'routecraft_control_center.py'
+$collectorDestination = Join-Path $installDirectory 'routecraft_collector.py'
 $configPath = Join-Path $installDirectory 'observatory-tray.json'
 $launcherPath = Join-Path $installDirectory 'start-hidden.vbs'
 
@@ -98,34 +136,42 @@ for ($attempt = 0; $attempt -lt 40; $attempt++) {
 Copy-Item -LiteralPath $traySource -Destination $trayDestination -Force
 Copy-Item -LiteralPath $heartbeatSource -Destination $heartbeatDestination -Force
 Copy-Item -LiteralPath $telemetrySource -Destination $telemetryDestination -Force
+Copy-Item -LiteralPath $unifiedCollectorSource -Destination $unifiedCollectorDestination -Force
+Copy-Item -LiteralPath $collectorSource -Destination $collectorDestination -Force
 
 $enabled = $true
-if (Test-Path -LiteralPath $configPath -PathType Leaf) {
-    try {
-        $previousConfig = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
-        $enabled = [bool]$previousConfig.enabled
+$controlCenterEnabled = $false
+if ($previousConfig) {
+    $enabled = [bool]$previousConfig.enabled
+    if ($previousConfig.PSObject.Properties['control_center_enabled']) {
+        $controlCenterEnabled = [bool]$previousConfig.control_center_enabled
     }
-    catch {
-        throw "既存設定を読み取れません: $configPath"
-    }
+}
+if ($PSBoundParameters.ContainsKey('EnableControlCenter')) {
+    $controlCenterEnabled = [bool]$EnableControlCenter
 }
 
 $config = [ordered]@{
     schema_version = 2
-    endpoint = $Endpoint
-    token_file = $resolvedTokenFile
     alias = $Alias
     interval_seconds = $IntervalSeconds
     dashboard_url = $DashboardUrl
     python_executable = $pythonExecutable
     heartbeat_script = $heartbeatDestination
     enabled = $enabled
+    control_center_enabled = $controlCenterEnabled
+    legacy_heartbeat_enabled = $legacyHeartbeatEnabled
+}
+if ($legacyHeartbeatEnabled) {
+    $config.endpoint = $Endpoint
+    $config.token_file = $resolvedTokenFile
 }
 if ($TelemetryEndpoint) {
     $config.telemetry_endpoint = $TelemetryEndpoint
     $config.telemetry_token_file = $resolvedTelemetryTokenFile
     $config.telemetry_sites_bypass_token_file = $resolvedSitesBypassTokenFile
     $config.telemetry_script = $telemetryDestination
+    $config.unified_collector_script = $unifiedCollectorDestination
     $config.telemetry_since_days = $TelemetrySinceDays
     $config.telemetry_include_legacy = [bool]$TelemetryIncludeLegacy
 }
@@ -134,6 +180,7 @@ elseif ($previousConfig -and $previousConfig.telemetry_endpoint) {
     $config.telemetry_token_file = [string]$previousConfig.telemetry_token_file
     $config.telemetry_sites_bypass_token_file = [string]$previousConfig.telemetry_sites_bypass_token_file
     $config.telemetry_script = $telemetryDestination
+    $config.unified_collector_script = $unifiedCollectorDestination
     $config.telemetry_since_days = [int]$previousConfig.telemetry_since_days
     $config.telemetry_include_legacy = [bool]$previousConfig.telemetry_include_legacy
 }
@@ -177,6 +224,8 @@ if (-not $running) {
     installed = $true
     running = $running
     enabled = $enabled
+    control_center_enabled = $controlCenterEnabled
+    legacy_heartbeat_enabled = $legacyHeartbeatEnabled
     interval_seconds = $IntervalSeconds
     startup = 'HKCU Run (one launch at sign-in)'
     scheduled_task_created = $false

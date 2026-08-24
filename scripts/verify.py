@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import py_compile
+import re
 import sys
 from pathlib import Path
 import tomllib
@@ -14,12 +15,14 @@ MEMORY_SCRIPT = PLUGIN / "scripts" / "routecraft_memory.py"
 MEMORY_PACKAGE = PLUGIN / "scripts" / "routecraft_memory_lib"
 EVALUATION_SCRIPT = PLUGIN / "scripts" / "routecraft_evaluation.py"
 OBSERVATORY_SCRIPT = PLUGIN / "scripts" / "routecraft_observatory.py"
+COLLECTOR_SCRIPT = PLUGIN / "scripts" / "routecraft_collector.py"
 LOCAL_SCRIPT = PLUGIN / "scripts" / "routecraft.py"
 LOCAL_PACKAGE = PLUGIN / "scripts" / "routecraft_local"
 LOCAL_VERSION_FILE = ROOT / "release" / "VERSION"
 LOCAL_VERSION = "1.0.0"
 
-EXPECTED_VERSION = "0.5.1+codex.20260823165811"
+EXPECTED_VERSION = "0.6.0"
+EXPECTED_VERSION_PATTERN = re.compile(r"^0\.6\.0\+codex\.[a-z0-9][a-z0-9-]*$")
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
@@ -76,6 +79,12 @@ required_files = [
     MEMORY_SCRIPT,
     EVALUATION_SCRIPT,
     OBSERVATORY_SCRIPT,
+    COLLECTOR_SCRIPT,
+    PLUGIN / "scripts" / "routecraft_control_center.py",
+    PLUGIN / "scripts" / "routecraft_agents_optimizer.py",
+    PLUGIN / "scripts" / "routecraft_hardener.py",
+    PLUGIN / "scripts" / "routecraft_benchmark_lab.py",
+    PLUGIN / "scripts" / "routecraft_endpoint_migration.py",
     LOCAL_SCRIPT,
     LOCAL_PACKAGE / "__init__.py",
     LOCAL_PACKAGE / "errors.py",
@@ -84,6 +93,7 @@ required_files = [
     LOCAL_PACKAGE / "service.py",
     LOCAL_PACKAGE / "git_tools.py",
     LOCAL_PACKAGE / "packs.py",
+    LOCAL_PACKAGE / "context_engine.py",
     LOCAL_PACKAGE / "cli.py",
     LOCAL_PACKAGE / "ui.py",
     LOCAL_PACKAGE / "web" / "index.html",
@@ -97,6 +107,7 @@ required_files = [
     ROOT / "samples" / "demo-memories.jsonl",
     ROOT / "samples" / "session-end-template.md",
     ROOT / "samples" / "evaluation-suite.json",
+    ROOT / "samples" / "benchmark-lab-fixture.json",
     LOCAL_VERSION_FILE,
     ROOT / "release" / "README-JA.md",
     ROOT / "release" / "UNINSTALL-JA.md",
@@ -136,6 +147,7 @@ required_files = [
     ROOT / "tests" / "test_routecraft_local_ui.py",
     ROOT / "tests" / "test_routecraft_local_cli.py",
     ROOT / "tests" / "test_routecraft_local_release.py",
+    ROOT / "tests" / "test_routecraft_control_center_runtime.py",
     ROOT / "README.md",
     ROOT / "README.ja.md",
     ROOT / "LICENSE",
@@ -180,8 +192,8 @@ for example in [ROOT / "samples" / "demo-memories.jsonl"]:
 
 if manifest.get("name") != "codex-routecraft":
     fail("plugin.json name must be codex-routecraft")
-if manifest.get("version") != EXPECTED_VERSION:
-    fail(f"plugin.json version must be {EXPECTED_VERSION}")
+if not isinstance(manifest.get("version"), str) or not EXPECTED_VERSION_PATTERN.fullmatch(manifest["version"]):
+    fail(f"plugin.json version must be {EXPECTED_VERSION}+codex.<cachebuster>")
 if manifest.get("skills") != "./skills/":
     fail("plugin.json skills must be ./skills/")
 keywords = set(manifest.get("keywords", [])) if isinstance(manifest.get("keywords"), list) else set()
@@ -275,7 +287,18 @@ for template_name, kind in [("case.md", "case"), ("candidate.md", "candidate"), 
 
 memory_python_files = [MEMORY_SCRIPT, *sorted(MEMORY_PACKAGE.glob("*.py"))]
 source_guard_script = PLUGIN / "scripts" / "routecraft_source_guard.py"
-python_files = [*memory_python_files, source_guard_script, EVALUATION_SCRIPT, OBSERVATORY_SCRIPT]
+python_files = [
+    *memory_python_files,
+    source_guard_script,
+    EVALUATION_SCRIPT,
+    OBSERVATORY_SCRIPT,
+    COLLECTOR_SCRIPT,
+    PLUGIN / "scripts" / "routecraft_control_center.py",
+    PLUGIN / "scripts" / "routecraft_agents_optimizer.py",
+    PLUGIN / "scripts" / "routecraft_hardener.py",
+    PLUGIN / "scripts" / "routecraft_benchmark_lab.py",
+    PLUGIN / "scripts" / "routecraft_endpoint_migration.py",
+]
 python_files.extend(sorted(LOCAL_PACKAGE.glob("*.py")))
 python_files.extend([LOCAL_SCRIPT, ROOT / "scripts" / "build_local_release.py", ROOT / "scripts" / "evaluate_routecraft_local.py"])
 for path in python_files:

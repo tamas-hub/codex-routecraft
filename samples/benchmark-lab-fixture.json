@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "fixture_id": "BENCHFIX-LOCAL-001",
+  "comparison_labels": [
+    "RouteCraft OFF",
+    "RouteCraft ON",
+    "RouteCraft + Memory",
+    "Old routing",
+    "New routing"
+  ],
+  "baseline": {"label": "RouteCraft OFF", "cases": 12, "score": 70},
+  "counterfactual": {"label": "RouteCraft ON", "cases": 12, "score": 70, "measurement_mode": "counterfactual"},
+  "measured_example": {
+    "current": {
+      "label": "Old routing",
+      "measured": true,
+      "metrics": {
+        "task_success_rate": 0.75,
+        "test_pass_rate": 0.75,
+        "quality_score": 68,
+        "tokens": 13200,
+        "duration_ms": 9100,
+        "retries": 2,
+        "rework": 3,
+        "reviewer_findings": 4,
+        "sample_count": 12
+      }
+    },
+    "candidate": {
+      "label": "New routing",
+      "measured": true,
+      "metrics": {
+        "task_success_rate": 0.916667,
+        "test_pass_rate": 0.916667,
+        "quality_score": 82,
+        "tokens": 11900,
+        "duration_ms": 7800,
+        "retries": 1,
+        "rework": 1,
+        "reviewer_findings": 1,
+        "sample_count": 12
+      }
+    }
+  }
+}

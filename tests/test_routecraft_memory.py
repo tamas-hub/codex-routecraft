@@ -28,6 +28,8 @@ class RouteCraftMemoryCliTests(unittest.TestCase):
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), *args],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=self.env,

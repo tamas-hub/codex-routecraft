@@ -2,7 +2,7 @@
 
 RouteCraftは、**Solを設計・統合・最終判断に残し、実装だけを必要に応じてLuna/Terraへ振り分け、過去に獲得した判断を次のCodexへ相続する**オーケストレーション・プラグインです。
 
-## RouteCraft Memory Local v1.0
+## RouteCraft Local Runtime 0.6.0
 
 このrepositoryには、既存のMarkdown Decision Storeとは独立したローカル製品「RouteCraft Memory Local」も含まれます。
 
@@ -34,7 +34,35 @@ routecraft git status
 routecraft session summarize
 routecraft loop status|configure
 routecraft backup|restore|doctor|ui
+routecraft doctor --scope health|all
+routecraft collector collect
+routecraft context engine --project <ID>
+routecraft agents analyze|preview|apply
+routecraft security analyze|preview|apply
+routecraft benchmark
+routecraft update --apply
+routecraft migrate local-db|decision-store|endpoint
 ```
+
+0.6.0のUnified Collectorは既存`routecraft_telemetry.py`を唯一のraw rollout parserとして使い、schema v3で`device_health`、`memory_metrics`、`usage_snapshots`、`benchmark_runs`、`security_scans`、`system_status`だけを追加します。各summaryは独立して失敗でき、prompt・会話・file本文・Memory/Decision本文・path・session ID・token等はcollector payloadへ出しません。`CONTROL_CENTER_ENABLED`が未設定またはfalseなら、Control Center transportはimportも送信もされず、Local Runtimeは単独で動きます。
+
+### 製品境界とSource of Truth
+
+Local RuntimeとControl Center Add-onは、別repository・別package・別version・別licenseで配布できる境界を維持します。schema v3のversioned JSON contractだけが両者を接続し、Control Center停止・未契約・通信障害はLocal Runtimeの処理結果に影響しません。
+
+| 領域 | Source of Truth | 永続状態 | 外部表示 |
+| --- | --- | --- | --- |
+| Routing / Hooks / Agents / Collector | `codex-routecraft` | 端末ローカル設定 | optional schema v3 summary |
+| Project Memory | RouteCraft Memory Local | local SQLite | aggregate counts only |
+| Reusable Decision | Private Decision Store | separate private Git store | aggregate counts only |
+| Benchmark / Security | local engine + adapter | local report | aggregate summary only |
+| Control Center UI / API / D1 | Control Center repository | existing Sites D1 | owner-only Site |
+
+Memory LocalとDecision Storeを物理統合せず、`Context Engine`がadapter経由で必要な項目だけをranking・deduplication・budget compilationします。
+
+AGENTS optimizerとSecurity Hardenerは`analyze`→`preview`→明示`apply`の順です。既定では書き換えません。`update`、DB migration、Decision Store importは明示確認が必要で、既存bootstrap/初期化実装へ委譲します。trayのURL移行は`routecraft migrate endpoint --config ... --old-url ... --new-url ...`でdry-runし、`--apply --confirm APPLY`時だけendpoint値だけをatomicに変更します。token、interval、enabled/OFF状態は保持し、tokenは出力しません。
+
+Security Hardenerの静的検査は、Git追跡済み（非Git時は上限付き）のテキストだけを読み、symlink/junction、依存物、生成物、巨大ファイルを追跡しません。secretらしき値やソース本文は出力せず、code・相対ファイル・行・安全な推奨だけを返します。依存lock、GitHub Actions、CSP/CORS/auth、Cloudflare設定、logging、unsafe eval/shell/SQL、infra設定をローカル観測します。外部脆弱性監査は実行せず、auth/authorization/SQL/主要依存の修正は推奨のみです。baseline fingerprintを入力すると既存・新規・解消件数を比較できます。Control Center向けsummaryは集計値のみです。
 
 Loop連携は明示的に有効化した場合だけ、登録済みprojectのCompact ContextをSessionStartへ注入し、正常なStop時にread-only Git metadataから未確認のsession summaryを保存します。raw transcriptは読まず、projectを自動作成しません。Decision Storeは汎用Case/Rule、Memory Localはproject作業記憶として分離します。反映には新しいCodexタスクが必要です。
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## RouteCraft Local Runtime 0.6.0 - 2026-08-24
+
+- Added a privacy-safe schema-v3 Unified Collector while preserving the existing v1/v2 run and memory-task contract.
+- Added optional Control Center transport, disabled by default and outside the core import boundary.
+- Added Context Engine, conservative AGENTS preview/apply, deterministic Benchmark Lab, safe Security Hardener, and additive CLI surfaces.
+- Added a narrow atomic Observatory endpoint migration helper that preserves token references, interval, and intentional OFF state.
+
 ## RouteCraft Memory Local 1.0.0 - 2026-08-23
 
 - Added a separate local-only SQLite project memory product without replacing the existing Markdown Decision Store or its CLI.

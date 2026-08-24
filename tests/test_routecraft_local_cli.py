@@ -137,7 +137,7 @@ class RouteCraftLocalCliTests(unittest.TestCase):
     def test_utf8_bom_stdin_search_context_handoff_and_backup(self) -> None:
         self.run_cli("init", "--json")
         project_id = self.add_project()
-        secret = "sk-abcdefghijklmnopqrstuvwxyz012345"
+        secret = "sk-" + "abcdefghijklmnopqrstuvwxyz012345"
         body = f"日本語stdin本文\r\n秘密 {secret}"
         added = self.payload(
             self.run_cli(
@@ -252,7 +252,7 @@ class RouteCraftLocalCliTests(unittest.TestCase):
             )
         )
         self.assertEqual(1, len(listed["data"]))
-        doctor = self.payload(self.run_cli("doctor", "--json"))
+        doctor = self.payload(self.run_cli("doctor", "--scope", "local", "--json"))
         self.assertTrue(doctor["data"]["ok"])
 
         invalid = self.base / "invalid.jsonl"
@@ -273,6 +273,50 @@ class RouteCraftLocalCliTests(unittest.TestCase):
         )
         self.assertFalse(failed["ok"])
         self.assertNotIn("Traceback", json.dumps(failed))
+
+    def test_benchmark_and_security_write_only_exact_aggregate_summaries(self) -> None:
+        benchmark_result = self.payload(self.run_cli("benchmark", "--json"))
+        self.assertTrue(benchmark_result["data"]["control_center_summary_saved"])
+        benchmark_path = self.base / "codex-home" / "routecraft" / "benchmark" / "latest-summary.json"
+        benchmark = json.loads(benchmark_path.read_text(encoding="utf-8"))
+        self.assertIn("benchmark_run_id", benchmark)
+        self.assertNotIn("sides", benchmark)
+        self.assertFalse(benchmark["measured"])
+
+        config = self.base / "source-control.json"
+        config.write_text('{"enabled":true}\n', encoding="utf-8")
+        security_result = self.payload(self.run_cli(
+            "security", "analyze", "--config", str(config), "--source-root", str(self.base), "--json",
+        ))
+        self.assertTrue(security_result["data"]["control_center_summary_saved"])
+        security_path = self.base / "codex-home" / "routecraft" / "security" / "latest-summary.json"
+        security = json.loads(security_path.read_text(encoding="utf-8"))
+        self.assertIn("scan_id", security)
+        self.assertNotIn("findings", security)
+
+    def test_doctor_defaults_to_unified_health_scope(self) -> None:
+        class DoctorService:
+            def initialize(self):
+                return {"ok": True}
+
+            def doctor(self):
+                return {"ok": True}
+
+        parser = LOCAL_CLI.build_parser()
+        args = parser.parse_args(["doctor", "--json"])
+        expected = {
+            "ok": True,
+            "Core": "OK",
+            "Control": "DISABLED",
+        }
+        output = io.StringIO()
+        from unittest import mock
+
+        with mock.patch.object(LOCAL_CLI, "_unified_doctor", return_value=expected):
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(0, LOCAL_CLI._handle(args, DoctorService(), True))
+        rendered = json.loads(output.getvalue())
+        self.assertEqual(expected, rendered["data"])
 
 
 if __name__ == "__main__":

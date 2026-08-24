@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -16,6 +17,7 @@ from .loop_bridge import configure as configure_loop
 from .loop_bridge import status as loop_status
 from .packs import build_context_pack, build_handoff_pack
 from .service import RouteCraftService
+from .context_engine import compile_context
 
 
 def _json_text(value: Any) -> str:
@@ -31,6 +33,122 @@ def _emit(data: Any, *, json_mode: bool, human: str | None = None) -> None:
         print(data)
     else:
         print(_json_text(data))
+
+
+def _default_summary_path(kind: str) -> Path:
+    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    return codex_home / "routecraft" / kind / "latest-summary.json"
+
+
+def _write_summary(path: str | Path, value: Any) -> None:
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".routecraft-tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    os.replace(temporary, target)
+
+
+def _collector_config() -> dict[str, Any]:
+    configured = os.environ.get("ROUTECRAFT_COLLECTOR_CONFIG")
+    if configured:
+        path = Path(configured).expanduser()
+    elif os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        path = Path(os.environ["LOCALAPPDATA"]) / "RouteCraft Observatory Tray" / "observatory-tray.json"
+    else:
+        path = Path.home() / ".config" / "routecraft" / "collector.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _routecraft_plugin_registration_count() -> int | None:
+    try:
+        completed = subprocess.run(
+            ["codex", "plugin", "list"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return sum("codex-routecraft@routecraft" in line for line in completed.stdout.splitlines())
+
+
+def _unified_doctor(service: RouteCraftService) -> dict[str, Any]:
+    from routecraft_collector import (
+        _decision_counts,
+        _device_id,
+        benchmark_summary,
+        configured_source_root,
+        device_health,
+        fixture_payload,
+        memory_metrics,
+        security_summary,
+        utc_now,
+        validate_v3,
+    )
+
+    local = service.doctor()
+    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    source_root = configured_source_root(codex_home) or Path(__file__).resolve().parents[4]
+    opaque_device = _device_id(codex_home)
+    observed_at = utc_now()
+    device = device_health(source_root, opaque_device, observed_at, codex_home)
+    memory = memory_metrics(str(service.data_dir), opaque_device, observed_at, codex_home, source_root)
+    decision = _decision_counts(codex_home, source_root)
+    benchmark = benchmark_summary(opaque_device, observed_at, codex_home / "routecraft" / "benchmark" / "latest-summary.json")
+    security = security_summary(opaque_device, observed_at, codex_home / "routecraft" / "security" / "latest-summary.json")
+    registration_count = _routecraft_plugin_registration_count()
+    collector_config = _collector_config()
+    control_enabled = bool(collector_config.get("control_center_enabled")) or os.environ.get("CONTROL_CENTER_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+    endpoint = collector_config.get("telemetry_endpoint")
+    token_file = collector_config.get("telemetry_token_file")
+    control_configured = bool(
+        control_enabled
+        and isinstance(endpoint, str)
+        and endpoint.startswith("https://")
+        and isinstance(token_file, str)
+        and Path(token_file).is_file()
+    )
+    plugin_ok = device["plugin_health"] == "healthy" and registration_count == 1
+    hooks_ok = device["hook_health"] == "healthy"
+    agents_ok = device["agents_healthy"] == device["agents_total"] == 6
+    local_ok = bool(local.get("ok"))
+    decision_ok = decision is not None
+    collector_ok = validate_v3(fixture_payload())
+    control_state = "DISABLED" if not control_enabled else "CONFIGURED" if control_configured else "DEGRADED"
+    overall = plugin_ok and hooks_ok and agents_ok and local_ok and decision_ok and collector_ok and (not control_enabled or control_configured)
+    return {
+        "ok": overall,
+        "Core": "OK" if plugin_ok and hooks_ok and agents_ok else "DEGRADED",
+        "Plugin": "OK" if plugin_ok else "DEGRADED",
+        "Hooks": "OK" if hooks_ok else "DEGRADED",
+        "Agents": f"{device['agents_healthy']}/{device['agents_total']}",
+        "Memory Local": "OK" if local_ok else "DEGRADED",
+        "Decision": "OK" if decision_ok else "UNAVAILABLE",
+        "Collector": "OK" if collector_ok else "DEGRADED",
+        "Git": "OK" if device["git_clean"] and device["git_conflicts"] == 0 else "DIRTY",
+        "API": control_state,
+        "Control": control_state,
+        "Benchmark": "READY" if benchmark["status"] == "unavailable" else str(benchmark["status"]).upper(),
+        "Security": "READY" if security["status"] == "unavailable" else str(security["status"]).upper(),
+        "details": {
+            "plugin_registrations": registration_count,
+            "memory_projects": local.get("projects", 0),
+            "memory_records": local.get("memories", 0),
+            "decision_cases": int(decision.get("decision_cases", 0)) if decision else 0,
+            "collector_schema": 3,
+            "control_center_enabled": control_enabled,
+        },
+    }
 
 
 def _read_body(body: str | None, input_file: str | None) -> str:
@@ -228,6 +346,13 @@ def build_parser() -> argparse.ArgumentParser:
     context_build.add_argument("--max-tokens", type=int)
     context_build.add_argument("--output")
     _add_json_flag(context_build)
+    context_engine = context_commands.add_parser("engine", help="Context Engine adapter")
+    _add_project_ref(context_engine)
+    context_engine.add_argument("--format", choices=("markdown", "text", "json"), default="markdown")
+    context_engine.add_argument("--profile", choices=("compact", "standard", "full"), default="standard")
+    context_engine.add_argument("--max-chars", type=int)
+    context_engine.add_argument("--max-tokens", type=int)
+    _add_json_flag(context_engine)
 
     handoff = commands.add_parser("handoff", help="AI間Handoff Pack")
     handoff_commands = handoff.add_subparsers(dest="handoff_command", required=True)
@@ -268,8 +393,78 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = commands.add_parser("status", help="ローカル状態を表示")
     _add_json_flag(status)
-    doctor = commands.add_parser("doctor", help="システム診断")
+    doctor = commands.add_parser("doctor", help="RouteCraft 全体の統合診断")
+    doctor.add_argument("--scope", choices=("local", "health", "all"), default="health")
     _add_json_flag(doctor)
+
+    collector = commands.add_parser("collector", help="Unified Collector (local only)")
+    collector_commands = collector.add_subparsers(dest="collector_command", required=True)
+    collector_collect = collector_commands.add_parser("collect", help="schema v3 privacy-safe payload を生成")
+    collector_collect.add_argument("--sessions-dir")
+    collector_collect.add_argument("--since-days", type=int, default=30)
+    _add_json_flag(collector_collect)
+
+    agents = commands.add_parser("agents", help="AGENTS optimizer")
+    agents_commands = agents.add_subparsers(dest="agents_command", required=True)
+    for name in ("analyze", "preview", "apply"):
+        item = agents_commands.add_parser(name)
+        item.add_argument("--path", default="AGENTS.md")
+        if name == "apply":
+            item.add_argument("--confirm", required=True)
+        _add_json_flag(item)
+
+    harden = commands.add_parser("security", help="Security Hardener")
+    harden_commands = harden.add_subparsers(dest="security_command", required=True)
+    for name in ("analyze", "preview", "apply"):
+        item = harden_commands.add_parser(name)
+        item.add_argument("--config", required=True)
+        item.add_argument("--source-root")
+        if name in {"analyze", "preview"}:
+            item.add_argument("--baseline")
+        if name == "analyze":
+            item.add_argument("--summary-output", default=str(_default_summary_path("security")))
+            item.add_argument("--no-summary", action="store_true")
+        if name == "apply":
+            item.add_argument("--confirm", required=True)
+        _add_json_flag(item)
+
+    benchmark = commands.add_parser("benchmark", help="deterministic local Benchmark Lab")
+    benchmark.add_argument("--fixture", default=str(Path(__file__).resolve().parents[4] / "samples" / "benchmark-lab-fixture.json"))
+    benchmark.add_argument("--observed")
+    benchmark.add_argument("--summary-output", default=str(_default_summary_path("benchmark")))
+    benchmark.add_argument("--no-summary", action="store_true")
+    _add_json_flag(benchmark)
+
+    update = commands.add_parser("update", help="既存device bootstrapへ明示委譲")
+    update.add_argument("--apply", action="store_true")
+    update.add_argument("--source-dir")
+    update.add_argument("--memory-dir")
+    update.add_argument("--source-branch")
+    update.add_argument("--memory-branch")
+    update.add_argument("--source-remote")
+    update.add_argument("--memory-remote")
+    update.add_argument("--allow-first-device", action="store_true")
+    update.add_argument("--enable-project-source-guard", action="store_true")
+    update.add_argument("--github-owner")
+    _add_json_flag(update)
+
+    migrate = commands.add_parser("migrate", help="既存Local Runtime migrationへ明示委譲")
+    migrate_commands = migrate.add_subparsers(dest="migrate_command", required=True)
+    migrate_db = migrate_commands.add_parser("local-db")
+    migrate_db.add_argument("--confirm", required=True)
+    _add_json_flag(migrate_db)
+    migrate_store = migrate_commands.add_parser("decision-store")
+    migrate_store.add_argument("--project", required=True)
+    migrate_store.add_argument("--input", required=True)
+    migrate_store.add_argument("--confirm", required=True)
+    _add_json_flag(migrate_store)
+    migrate_endpoint = migrate_commands.add_parser("endpoint")
+    migrate_endpoint.add_argument("--config", required=True)
+    migrate_endpoint.add_argument("--old-url", required=True)
+    migrate_endpoint.add_argument("--new-url", required=True)
+    migrate_endpoint.add_argument("--apply", action="store_true")
+    migrate_endpoint.add_argument("--confirm")
+    _add_json_flag(migrate_endpoint)
 
     backup = commands.add_parser("backup", help="DBバックアップを作成")
     backup.add_argument("--output")
@@ -484,6 +679,17 @@ def _handle(args: argparse.Namespace, service: RouteCraftService, json_mode: boo
         return 0
 
     if command == "context":
+        if args.context_command == "engine":
+            result = compile_context(
+                service,
+                args.project,
+                format=args.format,
+                profile=args.profile,
+                max_chars=args.max_chars,
+                max_tokens=args.max_tokens,
+            )
+            _emit(result, json_mode=json_mode)
+            return 0
         result = build_context_pack(
             service,
             args.project,
@@ -540,9 +746,91 @@ def _handle(args: argparse.Namespace, service: RouteCraftService, json_mode: boo
         _emit(result, json_mode=json_mode)
         return 0
     if command == "doctor":
-        result = service.doctor()
+        result = service.doctor() if args.scope == "local" else _unified_doctor(service)
         _emit(result, json_mode=json_mode)
         return 0 if result.get("ok", True) else 1
+    if command == "collector":
+        from routecraft_collector import collect_v3
+
+        source_root = Path(__file__).resolve().parents[4]
+        sessions = Path(args.sessions_dir) if args.sessions_dir else None
+        result = collect_v3(source_root=source_root, data_dir=str(service.data_dir), sessions_dir=sessions, since_days=args.since_days)
+        _emit(result, json_mode=json_mode)
+        return 0
+    if command == "agents":
+        import routecraft_agents_optimizer as optimizer
+
+        if args.agents_command == "analyze":
+            result = optimizer.analyze(args.path).__dict__
+        elif args.agents_command == "preview":
+            result = optimizer.preview(args.path)
+        else:
+            result = optimizer.apply(args.path, args.confirm)
+        _emit(result, json_mode=json_mode)
+        return 0
+    if command == "security":
+        import routecraft_hardener as hardener
+
+        if args.security_command == "analyze":
+            result = hardener.analyze(args.config, args.source_root, args.baseline)
+            if not args.no_summary:
+                _write_summary(args.summary_output, hardener.to_d1_summary(result))
+                result = {**result, "control_center_summary_saved": True}
+        elif args.security_command == "preview":
+            result = hardener.preview(args.config, args.source_root, args.baseline)
+        else:
+            result = hardener.apply(args.config, args.confirm)
+        _emit(result, json_mode=json_mode)
+        return 0
+    if command == "benchmark":
+        import routecraft_benchmark_lab as lab
+
+        observed = json.loads(Path(args.observed).read_text(encoding="utf-8")) if args.observed else None
+        result = lab.compare(lab.load_fixture(args.fixture), observed)
+        if not args.no_summary:
+            _write_summary(args.summary_output, lab.to_d1_summary(result))
+            result = {**result, "control_center_summary_saved": True}
+        _emit(result, json_mode=json_mode)
+        return 0
+    if command == "update":
+        if not args.apply:
+            raise RouteCraftLocalError("update は --apply を明示してください。既存device bootstrapを実行します。")
+        import routecraft_device as device
+
+        if not args.memory_remote:
+            raise RouteCraftLocalError("update には --memory-remote が必要です。")
+        update_args = argparse.Namespace(
+            source_dir=args.source_dir or device.SOURCE_DIR,
+            memory_dir=args.memory_dir or device.MEMORY_DIR,
+            source_branch=args.source_branch or device.SOURCE_BRANCH,
+            memory_branch=args.memory_branch or device.MEMORY_BRANCH,
+            source_remote=args.source_remote or device.SOURCE_REMOTE,
+            memory_remote=args.memory_remote,
+            allow_first_device=args.allow_first_device,
+            enable_project_source_guard=args.enable_project_source_guard,
+            github_owner=args.github_owner,
+        )
+        result = device.bootstrap(update_args)
+        _emit(result, json_mode=json_mode)
+        return 0
+    if command == "migrate":
+        if args.migrate_command == "endpoint":
+            import routecraft_endpoint_migration as endpoint_migration
+
+            if args.apply:
+                result = endpoint_migration.apply(args.config, args.old_url, args.new_url, args.confirm or "")
+            else:
+                result = endpoint_migration.preview(args.config, args.old_url, args.new_url)
+            _emit(result, json_mode=json_mode)
+            return 0
+        if args.confirm != "MIGRATE":
+            raise RouteCraftLocalError("migrate には --confirm MIGRATE が必要です。")
+        if args.migrate_command == "local-db":
+            result = service.initialize()
+        else:
+            result = service.import_routecraft_store(args.project, args.input)
+        _emit(result, json_mode=json_mode)
+        return 0
     if command == "backup":
         result = service.backup(args.output)
         _emit(result, json_mode=json_mode, human=f"バックアップ: {result.get('output', '')}")
