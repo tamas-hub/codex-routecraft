@@ -65,8 +65,13 @@ def _collector_config() -> dict[str, Any]:
 
 def _routecraft_plugin_registration_count() -> int | None:
     try:
+        command = ["codex", "plugin", "list", "--json"]
+        if os.name == "nt":
+            # Python cannot launch the extensionless WindowsApps launcher directly;
+            # use the npm shim through cmd.exe, matching the PowerShell command.
+            command = ["cmd.exe", "/d", "/c", "codex.cmd", "plugin", "list", "--json"]
         completed = subprocess.run(
-            ["codex", "plugin", "list"],
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -79,7 +84,17 @@ def _routecraft_plugin_registration_count() -> int | None:
         return None
     if completed.returncode != 0:
         return None
-    return sum("codex-routecraft@routecraft" in line for line in completed.stdout.splitlines())
+    try:
+        payload = json.loads(completed.stdout.lstrip("\ufeff"))
+    except (TypeError, ValueError):
+        return None
+    installed = payload.get("installed") if isinstance(payload, dict) else None
+    if not isinstance(installed, list):
+        return None
+    return sum(
+        isinstance(plugin, dict) and plugin.get("pluginId") == "codex-routecraft@routecraft"
+        for plugin in installed
+    )
 
 
 def _unified_doctor(service: RouteCraftService) -> dict[str, Any]:

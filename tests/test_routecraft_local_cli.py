@@ -10,6 +10,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -310,13 +311,40 @@ class RouteCraftLocalCliTests(unittest.TestCase):
             "Control": "DISABLED",
         }
         output = io.StringIO()
-        from unittest import mock
-
         with mock.patch.object(LOCAL_CLI, "_unified_doctor", return_value=expected):
             with contextlib.redirect_stdout(output):
                 self.assertEqual(0, LOCAL_CLI._handle(args, DoctorService(), True))
         rendered = json.loads(output.getvalue())
         self.assertEqual(expected, rendered["data"])
+
+    def test_plugin_registration_count_reads_json_on_windows(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "installed": [
+                        {"pluginId": "other@marketplace"},
+                        {"pluginId": "codex-routecraft@routecraft"},
+                    ],
+                    "available": [],
+                }
+            ),
+            stderr="",
+        )
+        with mock.patch.object(LOCAL_CLI.os, "name", "nt"), mock.patch.object(
+            LOCAL_CLI.subprocess, "run", return_value=completed
+        ) as run:
+            self.assertEqual(1, LOCAL_CLI._routecraft_plugin_registration_count())
+        self.assertEqual(
+            ["cmd.exe", "/d", "/c", "codex.cmd", "plugin", "list", "--json"],
+            run.call_args.args[0],
+        )
+
+    def test_plugin_registration_count_returns_none_for_invalid_json(self) -> None:
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="not json", stderr="")
+        with mock.patch.object(LOCAL_CLI.subprocess, "run", return_value=completed):
+            self.assertIsNone(LOCAL_CLI._routecraft_plugin_registration_count())
 
 
 if __name__ == "__main__":
