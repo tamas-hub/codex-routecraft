@@ -76,7 +76,14 @@ class BenchmarkError(RuntimeError):
 
 
 def _authorize_executable_suite(path: str | Path, *, allow_custom: bool, confirmation: str | None) -> None:
-    digest = hashlib.sha256(Path(path).expanduser().resolve().read_bytes()).hexdigest()
+    suite_path = Path(path).expanduser().resolve()
+    try:
+        # Git may materialize CRLF on Windows. Universal-newline decoding keeps
+        # the executable-suite identity stable without ignoring content drift.
+        canonical_bytes = suite_path.read_text(encoding="utf-8").encode("utf-8")
+    except OSError as exc:
+        raise BenchmarkError(f"could not authorize benchmark suite {suite_path}: {exc}") from exc
+    digest = hashlib.sha256(canonical_bytes).hexdigest()
     if digest == BUNDLED_SUITE_SHA256:
         return
     if not allow_custom or confirmation != "CUSTOM_SUITE_UNTRUSTED":

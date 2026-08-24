@@ -21,6 +21,14 @@ class RealBenchmarkTests(unittest.TestCase):
         self.suite_path = ROOT / "samples" / "real-agent-benchmark-suite.json"
         self.suite = benchmark.load_suite(self.suite_path)
 
+    def test_bundled_suite_authorization_is_stable_across_git_line_endings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            crlf_suite = Path(temporary) / "suite.json"
+            source = benchmark.DEFAULT_SUITE_PATH.read_text(encoding="utf-8")
+            crlf_suite.write_bytes(source.replace("\n", "\r\n").encode("utf-8"))
+
+            benchmark._authorize_executable_suite(crlf_suite, allow_custom=False, confirmation=None)
+
     def test_suite_has_all_required_categories_and_non_shell_acceptance(self) -> None:
         self.assertGreaterEqual(len(self.suite["cases"]), 10)
         categories = {case["category"] for case in self.suite["cases"]}
@@ -81,21 +89,28 @@ class RealBenchmarkTests(unittest.TestCase):
         self.assertNotIn("--yolo", off)
 
     def test_codex_binary_resolution_prefers_the_windows_cmd_launcher(self) -> None:
-        with patch.object(benchmark.os, "name", "nt"), patch.object(benchmark.shutil, "which", side_effect=lambda value: "C:/Codex/codex.cmd" if value == "codex.cmd" else None):
-            self.assertEqual(benchmark.resolve_codex_bin("codex"), str(Path("C:/Codex/codex.cmd").resolve()))
+        host_path_type = type(Path.cwd())
+        expected = str(host_path_type("C:/Codex/codex.cmd").resolve())
+        with (
+            patch.object(benchmark.os, "name", "nt"),
+            patch.object(benchmark, "Path", host_path_type),
+            patch.object(benchmark.shutil, "which", side_effect=lambda value: "C:/Codex/codex.cmd" if value == "codex.cmd" else None),
+        ):
+            self.assertEqual(benchmark.resolve_codex_bin("codex"), expected)
 
     def test_windows_permission_profiles_require_elevated_backend(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary, patch.object(benchmark.os, "name", "nt"):
+        with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for name in ("workspace", "evaluation", "harness", "broker"):
                 (root / name).mkdir()
-            config = benchmark._permission_profile_config(
-                broker_home=root / "broker",
-                workspace=root / "workspace",
-                evaluation_dir=root / "evaluation",
-                harness=root / "harness",
-                codex_bin=sys.executable,
-            )
+            with patch.object(benchmark.os, "name", "nt"), patch.object(benchmark, "Path", type(root)):
+                config = benchmark._permission_profile_config(
+                    broker_home=root / "broker",
+                    workspace=root / "workspace",
+                    evaluation_dir=root / "evaluation",
+                    harness=root / "harness",
+                    codex_bin=sys.executable,
+                )
         self.assertIn('[windows]\nsandbox = "elevated"', config)
         self.assertIn('[permissions.benchmark-solver.filesystem]', config)
         self.assertIn('[permissions.benchmark-acceptance.filesystem]', config)
