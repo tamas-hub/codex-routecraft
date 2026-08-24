@@ -1,6 +1,6 @@
 {
   "name": "codex-routecraft",
-  "version": "0.6.0+codex.20260824054932",
+  "version": "0.6.0+codex.20260824055540",
   "description": "Unified RouteCraft Local Runtime for orchestration, hooks, agents, memory adapters, context compilation, quality checks, and optional Control Center telemetry.",
   "author": {
     "name": "tamas-hub",

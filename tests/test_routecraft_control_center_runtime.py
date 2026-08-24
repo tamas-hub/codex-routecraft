@@ -430,3 +430,28 @@ class ControlCenterRuntimeTests(unittest.TestCase):
             self.assertFalse(updated["enabled"])
             self.assertEqual(original["token_file"], updated["token_file"])
             self.assertTrue(Path(str(result["backup_path"])).is_file())
+
+    def test_endpoint_migration_replaces_site_origin_and_preserves_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "observatory-tray.json"
+            old = "https://routecraft-execution-observatory.example"
+            new = "https://routecraft.example"
+            original = {
+                "dashboard_url": old,
+                "endpoint": "https://heartbeat.example/api",
+                "telemetry_endpoint": old + "/api/ingest",
+                "telemetry_token_file": "private-token-path",
+                "control_center_enabled": True,
+            }
+            config.write_text(json.dumps(original), encoding="utf-8")
+            self.assertEqual(
+                ["dashboard_url", "telemetry_endpoint"],
+                ENDPOINT.preview(config, old, new)["keys"],
+            )
+            ENDPOINT.apply(config, old, new, "APPLY")
+            updated = json.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(new, updated["dashboard_url"])
+            self.assertEqual(new + "/api/ingest", updated["telemetry_endpoint"])
+            self.assertEqual(original["endpoint"], updated["endpoint"])
+            self.assertEqual(original["telemetry_token_file"], updated["telemetry_token_file"])
+            self.assertTrue(updated["control_center_enabled"])

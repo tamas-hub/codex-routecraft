@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-ENDPOINT_KEYS = ("endpoint", "telemetry_endpoint")
+ENDPOINT_KEYS = ("dashboard_url", "endpoint", "telemetry_endpoint")
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -23,10 +23,22 @@ def _validate_urls(old_url: str, new_url: str) -> None:
         raise ValueError("old and new URLs must be distinct HTTPS endpoints")
 
 
+def _replace_origin(value: object, old_url: str, new_url: str) -> str | None:
+    if not isinstance(value, str):
+        return None
+    old = old_url.rstrip("/")
+    new = new_url.rstrip("/")
+    if value == old:
+        return new
+    if value.startswith(old + "/"):
+        return new + value[len(old):]
+    return None
+
+
 def preview(config_path: str | Path, old_url: str, new_url: str) -> dict[str, object]:
     _validate_urls(old_url, new_url)
     config = _load(Path(config_path))
-    changed = [key for key in ENDPOINT_KEYS if config.get(key) == old_url]
+    changed = [key for key in ENDPOINT_KEYS if _replace_origin(config.get(key), old_url, new_url) is not None]
     return {"state": "ready" if changed else "unchanged", "changed_endpoint_count": len(changed), "keys": changed}
 
 
@@ -39,7 +51,10 @@ def apply(config_path: str | Path, old_url: str, new_url: str, confirmation: str
         return {**check, "applied": False, "backup_path": None}
     config = _load(target)
     for key in check["keys"]:
-        config[str(key)] = new_url
+        replacement = _replace_origin(config.get(str(key)), old_url, new_url)
+        if replacement is None:
+            raise ValueError("endpoint configuration changed during migration")
+        config[str(key)] = replacement
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup = target.with_name(target.name + ".before-endpoint-migration-" + stamp + ".bak")
     shutil.copy2(target, backup)
