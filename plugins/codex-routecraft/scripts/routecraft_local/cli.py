@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from . import IMPORTANCE_LEVELS, MEMORY_TYPES, VERSION
+from . import IMPORTANCE_LEVELS, MEMORY_LOCAL_VERSION, MEMORY_TYPES, RUNTIME_VERSION
 from .errors import RouteCraftLocalError
 from .git_tools import inspect_git, rule_based_session_summary
 from .loop_bridge import configure as configure_loop
@@ -97,6 +97,114 @@ def _routecraft_plugin_registration_count() -> int | None:
     )
 
 
+def _git_worktree_breakdown(source_root: Path) -> dict[str, Any]:
+    """Separate tracked source state from intentional local context.
+
+    RouteCraft's Context Compiler writes `.ccc/` as device-local evidence.  It
+    must remain visible, but it must not turn an otherwise unchanged tracked
+    checkout into a generic DIRTY result.
+    """
+
+    result: dict[str, Any] = {
+        "available": False,
+        "tracked_clean": False,
+        "tracked_changes": 0,
+        "conflicts": 0,
+        "local_context_untracked": 0,
+        "other_untracked": 0,
+    }
+    try:
+        status = subprocess.run(
+            ["git", "-C", str(source_root), "status", "--porcelain=v1", "--untracked-files=all"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=8,
+        )
+        conflicts = subprocess.run(
+            ["git", "-C", str(source_root), "diff", "--name-only", "--diff-filter=U"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return result
+    if status.returncode != 0 or conflicts.returncode != 0:
+        return result
+    tracked_changes = 0
+    local_context = 0
+    other_untracked = 0
+    for line in status.stdout.splitlines():
+        if len(line) < 3:
+            continue
+        if line.startswith("?? "):
+            path = line[3:].strip().strip('"').replace("\\", "/")
+            if path == ".ccc" or path.startswith(".ccc/"):
+                local_context += 1
+            else:
+                other_untracked += 1
+        else:
+            tracked_changes += 1
+    conflict_count = sum(bool(line.strip()) for line in conflicts.stdout.splitlines())
+    return {
+        "available": True,
+        "tracked_clean": tracked_changes == 0 and conflict_count == 0,
+        "tracked_changes": tracked_changes,
+        "conflicts": conflict_count,
+        "local_context_untracked": local_context,
+        "other_untracked": other_untracked,
+    }
+
+
+def _real_benchmark_gate_ready(rows: Sequence[dict[str, Any]]) -> bool:
+    """Require complete, condition-gated real evidence before Gate A passes.
+
+    `acceptance_pass` in the v2 runner is false when the OFF-isolation or ON
+    policy-marker/evaluator contract fails, so a 100% acceptance row proves
+    both task acceptance and treatment validity without exporting raw markers.
+    """
+    required_modes = {"off", "on_memory_off", "on_recall", "full_memory"}
+    required_metrics = {"task_success", "test_pass", "acceptance_pass", "total_tokens"}
+    by_mode: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        mode = str(row.get("mode", ""))
+        metric = str(row.get("metric", ""))
+        if mode not in required_modes or metric not in required_metrics:
+            continue
+        if metric in by_mode.setdefault(mode, {}):
+            return False
+        by_mode[mode][metric] = row
+    if set(by_mode) != required_modes:
+        return False
+    for mode in required_modes:
+        metrics = by_mode[mode]
+        if set(metrics) != required_metrics:
+            return False
+        sample_sizes = {int(row.get("sample_size", 0) or 0) for row in metrics.values()}
+        case_counts = {int(row.get("case_count", 0) or 0) for row in metrics.values()}
+        if len(sample_sizes) != 1 or min(sample_sizes) < 10 or len(case_counts) != 1 or min(case_counts) < 10:
+            return False
+        sample_size = next(iter(sample_sizes))
+        for row in metrics.values():
+            if row.get("evidence_status") != "measured" or row.get("confidence") not in {"medium", "high"}:
+                return False
+            if int(row.get("available_count", -1) or 0) != sample_size:
+                return False
+        for metric in ("task_success", "test_pass", "acceptance_pass"):
+            if metrics[metric].get("success_rate") != 100.0:
+                return False
+        if metrics["total_tokens"].get("mean_value") is None:
+            return False
+    return True
+
+
 def _unified_doctor(service: RouteCraftService) -> dict[str, Any]:
     from routecraft_collector import (
         _decision_counts,
@@ -104,16 +212,18 @@ def _unified_doctor(service: RouteCraftService) -> dict[str, Any]:
         benchmark_summary,
         configured_source_root,
         device_health,
-        fixture_payload,
+        fixture_payload_v4,
         memory_metrics,
+        _summary_rows,
         security_summary,
         utc_now,
-        validate_v3,
+        validate_v4,
     )
 
     local = service.doctor()
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     source_root = configured_source_root(codex_home) or Path(__file__).resolve().parents[4]
+    git_breakdown = _git_worktree_breakdown(source_root)
     opaque_device = _device_id(codex_home)
     observed_at = utc_now()
     device = device_health(source_root, opaque_device, observed_at, codex_home)
@@ -138,7 +248,62 @@ def _unified_doctor(service: RouteCraftService) -> dict[str, Any]:
     agents_ok = device["agents_healthy"] == device["agents_total"] == 6
     local_ok = bool(local.get("ok"))
     decision_ok = decision is not None
-    collector_ok = validate_v3(fixture_payload())
+    collector_ok = validate_v4(fixture_payload_v4())
+    benchmark_evidence = _summary_rows(codex_home / "routecraft" / "benchmark" / "real-d1-summary.json", "benchmark_metric_evidence", opaque_device)
+    security_validation = _summary_rows(codex_home / "routecraft" / "security" / "validation-d1-summary.json", "security_validations", opaque_device)
+    legacy_components = _summary_rows(codex_home / "routecraft" / "legacy" / "latest-d1-summary.json", "legacy_components", opaque_device)
+    evidence_confidence = "LOW"
+    if benchmark_evidence:
+        confidences = {str(row.get("confidence", "low")) for row in benchmark_evidence}
+        evidence_confidence = "HIGH" if confidences == {"high"} else "MEDIUM" if "low" not in confidences else "LOW"
+    graph_engine_ok = False
+    graph_schema_ok = False
+    graph_health: dict[str, Any] = {
+        "graph_mode": "off",
+        "graph_schema": "unavailable",
+        "state_store": "UNAVAILABLE",
+        "checkpoint": "UNAVAILABLE",
+        "resume": "UNAVAILABLE",
+        "lane_registry": "UNAVAILABLE",
+        "execution_boundary": "UNAVAILABLE",
+        "trusted_evidence": "UNAVAILABLE",
+        "policy_version": "UNAVAILABLE",
+        "allowlist": [],
+        "config": "UNAVAILABLE",
+    }
+    gate_checks: dict[str, bool] | None = None
+    requested_graph_mode = os.environ.get("ROUTECRAFT_GRAPH_MODE", "observe").strip().lower() or "observe"
+    effective_graph_mode = "off"
+    try:
+        import routecraft_execution_graph as graph
+        import routecraft_graph_cli as durable_graph
+
+        graph_health = durable_graph.doctor()
+        graph_engine_ok = graph_health.get("graph_engine") == "OK" and all(
+            graph.validate_primitive(item) for item in graph.GRAPH_PRIMITIVES
+        )
+        graph_schema_ok = graph_health.get("graph_schema") == "v1" and graph.GRAPH_SCHEMA_VERSION == 1
+        security_fixture_ok = bool(security_validation) and all(row.get("status") == "passed" for row in security_validation)
+        legacy_replacement_ok = bool(legacy_components) and all(
+            row.get("replacement_health") == "healthy"
+            and int(row.get("consecutive_healthy_cycles", 0) or 0) >= 3
+            and row.get("missing_snapshots") == 0
+            and row.get("duplicate_ingestions") == 0
+            for row in legacy_components
+        )
+        gate_checks = {
+            "real_model_benchmark_e2e": _real_benchmark_gate_ready(benchmark_evidence),
+            "security_rule_fixture_validation": security_fixture_ok,
+            "legacy_replacement_health": legacy_replacement_ok,
+            "runtime_regression": plugin_ok and hooks_ok and agents_ok,
+            "control_center_regression": False,
+            "memory_regression": local_ok and decision_ok,
+            "collector_regression": collector_ok,
+        }
+        gate = {"gate": "hardening_gate_a", "required_checks": gate_checks, "passed": all(gate_checks.values())}
+        effective_graph_mode = str(graph.mode_gate(requested_graph_mode, gate)["effective_mode"])
+    except (ImportError, ValueError, TypeError):
+        effective_graph_mode = "off"
     control_state = "DISABLED" if not control_enabled else "CONFIGURED" if control_configured else "DEGRADED"
     overall = plugin_ok and hooks_ok and agents_ok and local_ok and decision_ok and collector_ok and (not control_enabled or control_configured)
     return {
@@ -150,18 +315,48 @@ def _unified_doctor(service: RouteCraftService) -> dict[str, Any]:
         "Memory Local": "OK" if local_ok else "DEGRADED",
         "Decision": "OK" if decision_ok else "UNAVAILABLE",
         "Collector": "OK" if collector_ok else "DEGRADED",
-        "Git": "OK" if device["git_clean"] and device["git_conflicts"] == 0 else "DIRTY",
+        "Git": "OK" if git_breakdown["tracked_clean"] else "DIRTY" if git_breakdown["available"] else "UNAVAILABLE",
+        "Tracked files": "OK" if git_breakdown["tracked_clean"] else "DIRTY" if git_breakdown["available"] else "UNAVAILABLE",
+        "Local context / untracked state": (
+            f"{git_breakdown['local_context_untracked']} local context / {git_breakdown['other_untracked']} other"
+            if git_breakdown["available"]
+            else "UNAVAILABLE"
+        ),
         "API": control_state,
         "Control": control_state,
-        "Benchmark": "READY" if benchmark["status"] == "unavailable" else str(benchmark["status"]).upper(),
-        "Security": "READY" if security["status"] == "unavailable" else str(security["status"]).upper(),
+        "Benchmark": "UNAVAILABLE" if benchmark["status"] == "unavailable" else str(benchmark["status"]).upper(),
+        "Security": "UNAVAILABLE" if security["status"] == "unavailable" else str(security["status"]).upper(),
+        "Graph Engine": "OK" if graph_engine_ok else "UNAVAILABLE",
+        "Graph Mode": effective_graph_mode,
+        "Graph Schema": graph_health["graph_schema"] if graph_schema_ok else "UNAVAILABLE",
+        "Graph State Store": graph_health["state_store"],
+        "Checkpoint": graph_health["checkpoint"],
+        "Resume": graph_health["resume"],
+        "Lane Registry": graph_health["lane_registry"],
+        "Execution Boundary": graph_health["execution_boundary"],
+        "Trusted Evidence": graph_health["trusted_evidence"],
+        "Policy Version": graph_health["policy_version"],
+        "Current Graph Allowlist": graph_health["allowlist"],
+        "Benchmark Evidence": evidence_confidence,
+        "Policy Evidence": evidence_confidence,
+        "Security Coverage": (
+            "UNAVAILABLE"
+            if not security_validation
+            else "MEASURED"
+            if all(row.get("status") == "passed" and row.get("confidence") in {"medium", "high"} for row in security_validation)
+            else "PARTIAL"
+        ),
+        "Legacy Components": "UNOBSERVED" if not legacy_components else "OBSERVED",
         "details": {
             "plugin_registrations": registration_count,
             "memory_projects": local.get("projects", 0),
             "memory_records": local.get("memories", 0),
             "decision_cases": int(decision.get("decision_cases", 0)) if decision else 0,
-            "collector_schema": 3,
+            "collector_schema": 4,
             "control_center_enabled": control_enabled,
+            "hardening_gate_a": gate_checks,
+            "graph": graph_health,
+            "git": git_breakdown,
         },
     }
 
@@ -218,7 +413,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="routecraft",
         description="昨日のAI開発の続きを、今日のAIへ正確に引き継ぐローカル記憶ツール",
     )
-    parser.add_argument("--version", action="version", version=f"routecraft {VERSION}")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"routecraft {RUNTIME_VERSION} (memory-local {MEMORY_LOCAL_VERSION})",
+    )
     parser.add_argument("--data-dir", help="DB・backup・export の保存先（既定: ~/.routecraft-memory-local）")
     parser.add_argument("--json", dest="global_json", action="store_true", help="機械可読な JSON で出力")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -414,10 +613,97 @@ def build_parser() -> argparse.ArgumentParser:
 
     collector = commands.add_parser("collector", help="Unified Collector (local only)")
     collector_commands = collector.add_subparsers(dest="collector_command", required=True)
-    collector_collect = collector_commands.add_parser("collect", help="schema v3 privacy-safe payload を生成")
+    collector_collect = collector_commands.add_parser("collect", help="schema v4 privacy-safe payload を生成")
     collector_collect.add_argument("--sessions-dir")
     collector_collect.add_argument("--since-days", type=int, default=30)
     _add_json_flag(collector_collect)
+
+    graph = commands.add_parser("graph", help="Execution Graph deterministic engine")
+    graph_commands = graph.add_subparsers(dest="graph_command", required=True)
+    graph_mode = graph_commands.add_parser("mode", help="[legacy 0.6 adapter] off/observe only; enforce is never authorized")
+    graph_mode.add_argument("--mode", choices=("off", "observe", "enforce"), default=os.environ.get("ROUTECRAFT_GRAPH_MODE", "observe"))
+    graph_mode.add_argument("--hardening-gate")
+    _add_json_flag(graph_mode)
+    graph_create = graph_commands.add_parser("create", help="[deprecated legacy] units JSONのobserve shadowを生成")
+    graph_create.add_argument("--input", required=True)
+    graph_create.add_argument("--state-output", required=True)
+    graph_create.add_argument("--mode", choices=("off", "observe", "enforce"), default=os.environ.get("ROUTECRAFT_GRAPH_MODE", "observe"))
+    graph_create.add_argument("--hardening-gate")
+    graph_create.add_argument("--summary-output", default=str(_default_summary_path("graph").with_name("latest-d1-summary.json")))
+    graph_create.add_argument("--no-summary", action="store_true")
+    _add_json_flag(graph_create)
+    graph_plan = graph_commands.add_parser("plan", help="Graph IR v1をcompileし、専用SQLiteへcheckpoint")
+    graph_plan.add_argument("--input", required=True)
+    graph_plan.add_argument("--config")
+    graph_plan.add_argument("--store")
+    graph_plan.add_argument("--mode", choices=("off", "observe", "enforce"))
+    _add_json_flag(graph_plan)
+    for name in ("validate", "ready", "shadow", "summary"):
+        item = graph_commands.add_parser(name)
+        item.add_argument("--input", required=True)
+        if name == "validate":
+            item.add_argument("--config")
+        if name == "ready":
+            item.add_argument("--max-parallelism", type=int, default=3)
+        if name == "shadow":
+            item.add_argument("--predictions", required=True)
+        if name in {"shadow", "summary"}:
+            item.add_argument("--summary-output", default=str(_default_summary_path("graph").with_name("latest-d1-summary.json")))
+            item.add_argument("--no-summary", action="store_true")
+        _add_json_flag(item)
+    graph_run = graph_commands.add_parser("run", help="Ready nodeのclaimまたはstructured resultをdurable記録")
+    graph_run.add_argument("--graph-id", required=True)
+    graph_run.add_argument("--node")
+    graph_run.add_argument("--result")
+    graph_run.add_argument("--evidence")
+    graph_run.add_argument("--usage", help="nullable実測値を持つAttempt usage JSON")
+    graph_run.add_argument("--gate-result", choices=("PASS", "FAIL", "INCONCLUSIVE"), default="PASS")
+    graph_run.add_argument("--failure")
+    graph_run.add_argument("--retry", action="store_true")
+    graph_run.add_argument("--config")
+    graph_run.add_argument("--store")
+    _add_json_flag(graph_run)
+    graph_approve = graph_commands.add_parser("approve", help="Human Approval Nodeをcurrent input hashへ明示承認")
+    graph_approve.add_argument("--graph-id", required=True)
+    graph_approve.add_argument("--node", required=True)
+    graph_approve.add_argument(
+        "--confirm",
+        required=True,
+        help="<graph_id>:<node_id>:<input_hash>:<operation_hash> の完全一致",
+    )
+    graph_approve.add_argument("--actor-ref", required=True)
+    graph_approve.add_argument("--operation", required=True, help="kind/target_scope/parameters_hashを持つJSON")
+    graph_approve.add_argument("--evidence", required=True)
+    graph_approve.add_argument("--usage", required=True)
+    graph_approve.add_argument("--config")
+    graph_approve.add_argument("--store")
+    _add_json_flag(graph_approve)
+    for name in ("resume", "status", "cancel"):
+        item = graph_commands.add_parser(name)
+        item.add_argument("--graph-id", required=True)
+        item.add_argument("--config")
+        item.add_argument("--store")
+        if name == "status":
+            item.add_argument("--include-graph", action="store_true")
+        if name == "cancel":
+            item.add_argument("--confirm", required=True)
+        _add_json_flag(item)
+    graph_export = graph_commands.add_parser("export", help="Graph stateとprivacy-safe summaryをlocal export")
+    graph_export.add_argument("--graph-id", required=True)
+    graph_export.add_argument("--output", required=True)
+    graph_export.add_argument("--config")
+    graph_export.add_argument("--store")
+    _add_json_flag(graph_export)
+
+    policy = commands.add_parser("policy", help="Production policyとhuman-gated candidateを表示")
+    policy_commands = policy.add_subparsers(dest="policy_command", required=True)
+    for name in ("status", "candidates"):
+        item = policy_commands.add_parser(name)
+        item.add_argument("--config")
+        item.add_argument("--store")
+        if name == "candidates":
+            item.add_argument("--include-special-events", action="store_true")
+        _add_json_flag(item)
 
     agents = commands.add_parser("agents", help="AGENTS optimizer")
     agents_commands = agents.add_subparsers(dest="agents_command", required=True)
@@ -448,6 +734,8 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--observed")
     benchmark.add_argument("--summary-output", default=str(_default_summary_path("benchmark")))
     benchmark.add_argument("--no-summary", action="store_true")
+    benchmark.add_argument("--real-preflight", action="store_true", help="modelを呼ばずReal Benchmark sandbox/plugin境界を検証")
+    benchmark.add_argument("--codex-bin", default="codex")
     _add_json_flag(benchmark)
 
     update = commands.add_parser("update", help="既存device bootstrapへ明示委譲")
@@ -480,6 +768,12 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_endpoint.add_argument("--apply", action="store_true")
     migrate_endpoint.add_argument("--confirm")
     _add_json_flag(migrate_endpoint)
+    migrate_graph = migrate_commands.add_parser("graph-config", help="Graph config v1のdry-runまたはatomic作成")
+    migrate_graph.add_argument("--config")
+    migrate_graph.add_argument("--existing", help="既存設定JSON（未指定は0.6 defaultから移行）")
+    migrate_graph.add_argument("--apply", action="store_true")
+    migrate_graph.add_argument("--confirm")
+    _add_json_flag(migrate_graph)
 
     backup = commands.add_parser("backup", help="DBバックアップを作成")
     backup.add_argument("--output")
@@ -765,11 +1059,160 @@ def _handle(args: argparse.Namespace, service: RouteCraftService, json_mode: boo
         _emit(result, json_mode=json_mode)
         return 0 if result.get("ok", True) else 1
     if command == "collector":
-        from routecraft_collector import collect_v3
+        from routecraft_collector import collect_v4
 
         source_root = Path(__file__).resolve().parents[4]
         sessions = Path(args.sessions_dir) if args.sessions_dir else None
-        result = collect_v3(source_root=source_root, data_dir=str(service.data_dir), sessions_dir=sessions, since_days=args.since_days)
+        result = collect_v4(source_root=source_root, data_dir=str(service.data_dir), sessions_dir=sessions, since_days=args.since_days)
+        _emit(result, json_mode=json_mode)
+        return 0
+    if command == "graph":
+        import routecraft_execution_graph as graph
+        import routecraft_graph_cli as durable_graph
+
+        if args.graph_command == "mode":
+            if args.mode == "enforce":
+                raise RouteCraftLocalError(
+                    "ENFORCE_BOUNDARY_UNAVAILABLE: legacy graph mode cannot authorize enforce; use Graph IR v1 through graph plan with an injected trusted host boundary."
+                )
+            gate = json.loads(Path(args.hardening_gate).read_text(encoding="utf-8")) if args.hardening_gate else None
+            result = graph.mode_gate(args.mode, gate)
+        elif args.graph_command == "plan":
+            result = durable_graph.plan(
+                args.input,
+                config_path=args.config,
+                store_path=args.store,
+                data_dir=service.data_dir,
+                mode=args.mode,
+            )
+        elif args.graph_command == "create":
+            if args.mode == "enforce":
+                raise RouteCraftLocalError(
+                    "ENFORCE_BOUNDARY_UNAVAILABLE: deprecated graph create supports observe/off only; use Graph IR v1 graph plan."
+                )
+            plan = json.loads(Path(args.input).read_text(encoding="utf-8"))
+            if not isinstance(plan, dict):
+                raise RouteCraftLocalError("Graph plan input must be a JSON object.")
+            state_target = Path(args.state_output).expanduser()
+            if state_target.exists():
+                raise RouteCraftLocalError("Graph state output already exists. Use a new caller-owned path.")
+            gate = json.loads(Path(args.hardening_gate).read_text(encoding="utf-8")) if args.hardening_gate else None
+            state = graph.create_graph(
+                str(plan.get("graph_id", "")),
+                str(plan.get("task_class", "")),
+                plan.get("units", plan.get("nodes")),
+                edges=plan.get("edges"),
+                constraints=plan.get("constraints"),
+                limits=plan.get("limits"),
+                mode=args.mode,
+                hardening_gate=gate,
+            )
+            graph.validate_graph_or_raise(state)
+            _write_summary(state_target, state)
+            summary = graph.to_d1_summary(state)
+            if not args.no_summary:
+                _write_summary(args.summary_output, summary)
+            result = {
+                "valid": True,
+                "graph_schema_version": graph.GRAPH_SCHEMA_VERSION,
+                "mode": state["mode"],
+                "requested_mode": state["requested_mode"],
+                "node_count": len(state["nodes"]),
+                "edge_count": len(state["edges"]),
+                "state_saved": True,
+                "control_center_summary_saved": not args.no_summary,
+            }
+        else:
+            if args.graph_command == "validate":
+                state = json.loads(Path(args.input).read_text(encoding="utf-8-sig"))
+                if isinstance(state, dict) and "graph_schema_version" in state:
+                    result = durable_graph.validate_file(args.input, config_path=args.config)
+                else:
+                    valid = graph.validate_graph(state)
+                    result = {"valid": valid, "graph_schema_version": graph.GRAPH_SCHEMA_VERSION}
+            elif args.graph_command == "run":
+                result = durable_graph.run(
+                    args.graph_id,
+                    config_path=args.config,
+                    store_path=args.store,
+                    data_dir=service.data_dir,
+                    node_id=args.node,
+                    result_path=args.result,
+                    evidence_path=args.evidence,
+                    usage_path=args.usage,
+                    gate_result=args.gate_result,
+                    failure=args.failure,
+                    retry=args.retry,
+                )
+            elif args.graph_command == "resume":
+                result = durable_graph.resume(
+                    args.graph_id, config_path=args.config, store_path=args.store, data_dir=service.data_dir,
+                )
+            elif args.graph_command == "approve":
+                result = durable_graph.approve(
+                    args.graph_id,
+                    args.node,
+                    args.confirm,
+                    args.actor_ref,
+                    args.operation,
+                    args.evidence,
+                    args.usage,
+                    config_path=args.config,
+                    store_path=args.store,
+                    data_dir=service.data_dir,
+                )
+            elif args.graph_command == "status":
+                result = durable_graph.status(
+                    args.graph_id,
+                    config_path=args.config,
+                    store_path=args.store,
+                    data_dir=service.data_dir,
+                    include_graph=args.include_graph,
+                )
+            elif args.graph_command == "cancel":
+                result = durable_graph.cancel(
+                    args.graph_id,
+                    args.confirm,
+                    config_path=args.config,
+                    store_path=args.store,
+                    data_dir=service.data_dir,
+                )
+            elif args.graph_command == "export":
+                result = durable_graph.export(
+                    args.graph_id,
+                    args.output,
+                    config_path=args.config,
+                    store_path=args.store,
+                    data_dir=service.data_dir,
+                )
+            elif args.graph_command == "ready":
+                state = json.loads(Path(args.input).read_text(encoding="utf-8-sig"))
+                graph.validate_graph_or_raise(state)
+                result = {"ready": graph.ready_nodes(state), "selected": graph.parallel_ready_nodes(state, args.max_parallelism)}
+            else:
+                state = json.loads(Path(args.input).read_text(encoding="utf-8-sig"))
+                graph.validate_graph_or_raise(state)
+                if args.graph_command == "shadow":
+                    predictions = json.loads(Path(args.predictions).read_text(encoding="utf-8"))
+                    state = graph.record_shadow_predictions(state, predictions)
+                result = graph.to_d1_summary(state)
+                if not args.no_summary:
+                    _write_summary(args.summary_output, result)
+                    result = {**result, "control_center_summary_saved": True}
+        _emit(result, json_mode=json_mode)
+        return 0 if result.get("valid", True) else 1
+    if command == "policy":
+        import routecraft_graph_cli as durable_graph
+
+        if args.policy_command == "status":
+            result = durable_graph.policy_status(config_path=args.config, store_path=args.store)
+        else:
+            result = durable_graph.policy_candidates(
+                config_path=args.config,
+                store_path=args.store,
+                data_dir=service.data_dir,
+                normal_only=not args.include_special_events,
+            )
         _emit(result, json_mode=json_mode)
         return 0
     if command == "agents":
@@ -798,6 +1241,12 @@ def _handle(args: argparse.Namespace, service: RouteCraftService, json_mode: boo
         _emit(result, json_mode=json_mode)
         return 0
     if command == "benchmark":
+        if args.real_preflight:
+            import routecraft_real_benchmark as real_benchmark
+
+            result = real_benchmark.benchmark_sandbox_preflight(args.codex_bin)
+            _emit(result, json_mode=json_mode)
+            return 0
         import routecraft_benchmark_lab as lab
 
         observed = json.loads(Path(args.observed).read_text(encoding="utf-8")) if args.observed else None
@@ -829,6 +1278,22 @@ def _handle(args: argparse.Namespace, service: RouteCraftService, json_mode: boo
         _emit(result, json_mode=json_mode)
         return 0
     if command == "migrate":
+        if args.migrate_command == "graph-config":
+            import routecraft_graph_cli as durable_graph
+
+            existing = None
+            if args.existing:
+                existing = json.loads(Path(args.existing).read_text(encoding="utf-8-sig"))
+                if not isinstance(existing, dict):
+                    raise RouteCraftLocalError("既存Graph configはJSON objectでなければなりません。")
+            result = durable_graph.migrate_config(
+                config_path=args.config,
+                existing=existing,
+                apply=args.apply,
+                confirmation=args.confirm,
+            )
+            _emit(result, json_mode=json_mode)
+            return 0
         if args.migrate_command == "endpoint":
             import routecraft_endpoint_migration as endpoint_migration
 

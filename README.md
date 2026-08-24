@@ -1,6 +1,6 @@
 # RouteCraft for Codex
 
-## RouteCraft Local Runtime 0.6.0
+## RouteCraft Local Runtime 0.7.0
 
 This repository also contains RouteCraft Memory Local, a separate standard-library-only local product for carrying structured project decisions, failures, constraints, important files, and next actions across AI coding sessions. It uses a local SQLite database, Japanese-capable search, bounded Context Packs, six-file Handoff Packs, read-only Git metadata, confirmed backup/restore, and a Japanese-first Web UI bound only to `127.0.0.1`.
 
@@ -21,15 +21,15 @@ Python 3.11+ is required. Git is optional and used only for read-only repository
 
 RouteCraft is a Codex plugin/skill for software-delivery orchestration across the GPT-5.6 family. The primary Sol session owns architecture and acceptance. Bounded implementation can move to Luna, judgment-heavy implementation can move to Terra, and high-risk changes can receive a fresh Sol review.
 
-V0.6.0 adds a local-first Unified Collector (schema v3), Context Engine, conservative AGENTS optimizer, deterministic Benchmark Lab, Security Hardener, and additive doctor/update/migrate surfaces. Control Center transport remains optional: when `CONTROL_CENTER_ENABLED` is absent or false, core modules do not import it and no outbound delivery is attempted.
+V0.7.0 adds a versioned Graph IR, fail-closed compiler, evidence gates, a dedicated SQLite Graph State Store, hash-chain checkpoints, resume, selective retry, verified constraint feedback, and observe-first policy evaluation. The 0.6 single-node fast path remains available. Control Center transport remains optional: when `CONTROL_CENTER_ENABLED` is absent or false, core modules do not import it and no outbound delivery is attempted.
 
 ### Product boundary and sources of truth
 
-RouteCraft Local Runtime and the Control Center Add-on keep separate repository, package, version, and licensing boundaries. Their only connection is the versioned schema-v3 JSON contract. Control Center downtime, an absent subscription, or delivery failure cannot block routing, hooks, agents, either memory store, context compilation, benchmarks, or local security scans.
+RouteCraft Local Runtime and the Control Center Add-on keep separate repository, package, version, and licensing boundaries. Their only connection is the versioned schema-v1-v4 JSON contract; schema v4 adds aggregate-only hardening and graph evidence without removing the v1-v3 contracts. Control Center downtime, an absent subscription, or delivery failure cannot block routing, hooks, agents, either memory store, context compilation, benchmarks, or local security scans.
 
 | Surface | Source of truth | Durable state | Optional external view |
 | --- | --- | --- | --- |
-| Routing / Hooks / Agents / Collector | `codex-routecraft` | device-local configuration | schema-v3 aggregates |
+| Routing / Hooks / Agents / Collector | `codex-routecraft` | device-local configuration | optional schema-v1-v4 aggregates |
 | Project memory | RouteCraft Memory Local | local SQLite | aggregate counts only |
 | Reusable decisions | Private Decision Store | separate private Git store | aggregate counts only |
 | Benchmark / Security | local engine plus adapter | local report | aggregate summary only |
@@ -51,7 +51,7 @@ V0.3.0 adds a Persistent Decision Layer:
 
 The goal is not "use more agents" or "store more text." The goal is **use the cheapest credible lane and avoid paying the same search/reasoning cost twice**.
 
-> Status: v0.5.1. Codex multi-agent APIs are evolving; RouteCraft is capability-aware and fails conservatively when a requested model/effort lane cannot be selected or verified.
+> Status: v0.7.0 observe-first. Codex multi-agent APIs are evolving; RouteCraft is capability-aware and fails conservatively when a requested model/effort lane cannot be selected or verified.
 
 ## Architecture
 

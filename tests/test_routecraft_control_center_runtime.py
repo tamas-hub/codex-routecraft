@@ -230,6 +230,20 @@ class ControlCenterRuntimeTests(unittest.TestCase):
         self.assertTrue(COLLECTOR.validate_v3(payload))
         payload["benchmark_runs"][0]["measured"] = 1
         self.assertFalse(COLLECTOR.validate_v3(payload))
+
+    def test_v4_fixture_is_additive_and_exact_without_weakening_v3(self) -> None:
+        v3 = COLLECTOR.fixture_payload()
+        v4 = COLLECTOR.fixture_payload_v4()
+        self.assertTrue(COLLECTOR.validate_v3(v3))
+        self.assertFalse(COLLECTOR.validate_v4(v3))
+        self.assertTrue(COLLECTOR.validate_v4(v4))
+        self.assertEqual(4, v4["schema_version"])
+        self.assertEqual(set(COLLECTOR.V4_FAMILY_KEYS) - set(COLLECTOR.FAMILY_KEYS), {
+            "benchmark_metric_evidence", "security_validations", "graph_runs", "graph_node_metrics", "graph_events",
+            "policy_candidates", "security_rule_metrics", "legacy_components",
+        })
+        v4["graph_runs"] = [{"prompt": "private"}]
+        self.assertFalse(COLLECTOR.validate_v4(v4))
         payload = COLLECTOR.fixture_payload()
         payload["benchmark_runs"][0]["extra"] = "no"
         self.assertFalse(COLLECTOR.validate_v3(payload))
@@ -345,13 +359,14 @@ class ControlCenterRuntimeTests(unittest.TestCase):
             bypass_file = Path(tmp) / "bypass"
             token_file.write_text("a" * 32, encoding="utf-8")
             bypass_file.write_text("b" * 32, encoding="utf-8")
-            with mock.patch.dict("os.environ", {"CONTROL_CENTER_ENABLED": "false"}, clear=False), mock.patch.object(CONTROL.urllib.request, "urlopen") as urlopen:
+            token_file.chmod(0o600); bypass_file.chmod(0o600)
+            with mock.patch.dict("os.environ", {"CONTROL_CENTER_ENABLED": "false"}, clear=False), mock.patch.object(CONTROL._NO_REDIRECT_OPENER, "open") as urlopen:
                 self.assertEqual("disabled", CONTROL.deliver("https://example.invalid/api", token_file, payload, bypass_file)["state"])
                 urlopen.assert_not_called()
             response = mock.MagicMock(status=202)
             response.__enter__.return_value = response
-            with mock.patch.dict("os.environ", {"CONTROL_CENTER_ENABLED": "true"}, clear=False), mock.patch.object(CONTROL.urllib.request, "urlopen", return_value=response) as urlopen:
-                result = CONTROL.deliver("https://example.invalid/api", token_file, payload, bypass_file)
+            with mock.patch.dict("os.environ", {"CONTROL_CENTER_ENABLED": "true", "ROUTECRAFT_CONTROL_CENTER_ALLOWED_ORIGIN": "https://example.invalid"}, clear=False), mock.patch.object(CONTROL._NO_REDIRECT_OPENER, "open", return_value=response) as urlopen:
+                result = CONTROL.deliver("https://example.invalid/api/ingest", token_file, payload, bypass_file)
             request = urlopen.call_args.args[0]
             self.assertIsNotNone(request.get_header("Oai-sites-authorization"))
             self.assertTrue(result["delivered"])
@@ -365,12 +380,13 @@ class ControlCenterRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             token_file = Path(tmp) / "token"
             token_file.write_text("a" * 32, encoding="utf-8")
+            token_file.chmod(0o600)
             response = mock.MagicMock(status=202)
             response.__enter__.return_value = response
-            with mock.patch.dict("os.environ", {"CONTROL_CENTER_ENABLED": "true"}, clear=False), mock.patch.object(
-                CONTROL.urllib.request, "urlopen", return_value=response
+            with mock.patch.dict("os.environ", {"CONTROL_CENTER_ENABLED": "true", "ROUTECRAFT_CONTROL_CENTER_ALLOWED_ORIGIN": "https://example.invalid"}, clear=False), mock.patch.object(
+                CONTROL._NO_REDIRECT_OPENER, "open", return_value=response
             ) as urlopen:
-                result = CONTROL.deliver("https://example.invalid/api", token_file, payload)
+                result = CONTROL.deliver("https://example.invalid/api/ingest", token_file, payload)
         self.assertTrue(result["delivered"])
         self.assertEqual(3, result["batches"])
         batches = [json.loads(call.args[0].data.decode("utf-8")) for call in urlopen.call_args_list]
@@ -391,7 +407,7 @@ class ControlCenterRuntimeTests(unittest.TestCase):
             fixture = subprocess.run([sys.executable, str(installed / "routecraft_collector.py"), "--fixture"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", check=False)
             self.assertEqual(0, control.returncode, control.stderr)
             self.assertEqual(0, fixture.returncode, fixture.stderr)
-            self.assertTrue(COLLECTOR.validate_v3(json.loads(fixture.stdout)))
+            self.assertTrue(COLLECTOR.validate_payload(json.loads(fixture.stdout)))
             collector_text = (installed / "routecraft_collector.py").read_text(encoding="utf-8")
             for disallowed in ("routecraft_evaluation", "routecraft_local", "routecraft_memory_lib"):
                 self.assertNotIn(f"import {disallowed}", collector_text)

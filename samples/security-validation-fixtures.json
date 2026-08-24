@@ -1,0 +1,449 @@
+{
+  "schema_version": 1,
+  "fixture_set_id": "routecraft-security-validation-v1",
+  "manifest_scope": {
+    "mode": "static_local_text",
+    "claim": "Measures registered static text signal detection only; a clean scan is not a security guarantee."
+  },
+  "unsupported_checks": [
+    {
+      "check_id": "HTTP-RESPONSE-HEADERS-001",
+      "category": "http_headers",
+      "reason": "Runtime response-header verification requires an explicitly authorized HTTP observation and is outside this no-network fixture manifest."
+    }
+  ],
+  "cases": [
+    {
+      "fixture_id": "secret-static-vulnerable",
+      "rule_code": "SECRET-STATIC-001",
+      "category": "secrets",
+      "expectation": "vulnerable",
+      "expected_codes": ["SECRET-STATIC-001"],
+      "forbidden_codes": [],
+      "files": {"app.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "api_token = \"unsafe-value-for-validation\"\n"}}
+    },
+    {
+      "fixture_id": "secret-static-safe",
+      "rule_code": "SECRET-STATIC-001",
+      "category": "secrets",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["SECRET-STATIC-001"],
+      "files": {"app.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "api_token = \"YOUR_TOKEN_HERE\"\n"}}
+    },
+    {
+      "fixture_id": "credential-logging-vulnerable",
+      "rule_code": "LOG-CREDENTIAL-001",
+      "category": "credential_logging",
+      "expectation": "vulnerable",
+      "expected_codes": ["LOG-CREDENTIAL-001"],
+      "forbidden_codes": [],
+      "files": {"app.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "logger.info(\"token=%s\", token)\n"}}
+    },
+    {
+      "fixture_id": "credential-logging-safe",
+      "rule_code": "LOG-CREDENTIAL-001",
+      "category": "credential_logging",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["LOG-CREDENTIAL-001"],
+      "files": {"app.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "logger.info(\"authentication completed\")\n"}}
+    },
+    {
+      "fixture_id": "dynamic-code-vulnerable",
+      "rule_code": "CODE-EVAL-001",
+      "category": "eval",
+      "expectation": "vulnerable",
+      "expected_codes": ["CODE-EVAL-001"],
+      "forbidden_codes": [],
+      "files": {"app.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "result = eval(user_input)\n"}}
+    },
+    {
+      "fixture_id": "dynamic-code-safe",
+      "rule_code": "CODE-EVAL-001",
+      "category": "eval",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["CODE-EVAL-001"],
+      "files": {"app.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "result = json.loads(user_input)\n"}}
+    },
+    {
+      "fixture_id": "shell-vulnerable",
+      "rule_code": "SHELL-UNSAFE-001",
+      "category": "shell",
+      "expectation": "vulnerable",
+      "expected_codes": ["SHELL-UNSAFE-001"],
+      "forbidden_codes": [],
+      "files": {"app.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "subprocess.run(command, shell=True)\n"}}
+    },
+    {
+      "fixture_id": "shell-safe",
+      "rule_code": "SHELL-UNSAFE-001",
+      "category": "shell",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["SHELL-UNSAFE-001"],
+      "files": {"app.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "subprocess.run([\"tool\", \"--safe\"], check=True)\n"}}
+    },
+    {
+      "fixture_id": "sql-interpolation-vulnerable",
+      "rule_code": "SQL-INTERPOLATION-001",
+      "category": "sql",
+      "expectation": "vulnerable",
+      "expected_codes": ["SQL-INTERPOLATION-001"],
+      "forbidden_codes": [],
+      "files": {"store.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "query = f\"SELECT * FROM accounts WHERE id = {user_id}\"\n"}}
+    },
+    {
+      "fixture_id": "sql-interpolation-safe",
+      "rule_code": "SQL-INTERPOLATION-001",
+      "category": "sql",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["SQL-INTERPOLATION-001"],
+      "files": {"store.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "db.execute(\"SELECT * FROM accounts WHERE id = ?\", (user_id,))\n"}}
+    },
+    {
+      "fixture_id": "cors-wildcard-vulnerable",
+      "rule_code": "CORS-WILDCARD-001",
+      "category": "cors",
+      "expectation": "vulnerable",
+      "expected_codes": ["CORS-WILDCARD-001"],
+      "forbidden_codes": [],
+      "files": {"headers.ini": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "Access-Control-Allow-Origin = *\n"}}
+    },
+    {
+      "fixture_id": "cors-wildcard-safe",
+      "rule_code": "CORS-WILDCARD-001",
+      "category": "cors",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["CORS-WILDCARD-001"],
+      "files": {"headers.ini": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "Access-Control-Allow-Origin = https://app.example.invalid\n"}}
+    },
+    {
+      "fixture_id": "cors-wildcard-setter-vulnerable",
+      "rule_code": "CORS-WILDCARD-001",
+      "category": "cors",
+      "expectation": "vulnerable",
+      "expected_codes": ["CORS-WILDCARD-001"],
+      "forbidden_codes": [],
+      "files": {"headers.js": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "response.headers.set(\"Access-Control-Allow-Origin\", \"*\");\n"}}
+    },
+    {
+      "fixture_id": "cors-wildcard-setter-safe",
+      "rule_code": "CORS-WILDCARD-001",
+      "category": "cors",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["CORS-WILDCARD-001"],
+      "files": {"headers.js": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "response.headers.set(\"Access-Control-Allow-Origin\", \"https://app.example.invalid\");\n"}}
+    },
+    {
+      "fixture_id": "csp-weak-vulnerable",
+      "rule_code": "CSP-WEAK-001",
+      "category": "csp",
+      "expectation": "vulnerable",
+      "expected_codes": ["CSP-WEAK-001"],
+      "forbidden_codes": [],
+      "files": {"headers.txt": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "Content-Security-Policy: default-src 'self'; script-src 'unsafe-inline'\n"}}
+    },
+    {
+      "fixture_id": "csp-weak-safe",
+      "rule_code": "CSP-WEAK-001",
+      "category": "csp",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["CSP-WEAK-001"],
+      "files": {"headers.txt": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-validation'\n"}}
+    },
+    {
+      "fixture_id": "tls-verification-vulnerable",
+      "rule_code": "TLS-VERIFY-DISABLED-001",
+      "category": "tls",
+      "expectation": "vulnerable",
+      "expected_codes": ["TLS-VERIFY-DISABLED-001"],
+      "forbidden_codes": [],
+      "files": {"client.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "verify = False\n"}}
+    },
+    {
+      "fixture_id": "tls-verification-safe",
+      "rule_code": "TLS-VERIFY-DISABLED-001",
+      "category": "tls",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["TLS-VERIFY-DISABLED-001"],
+      "files": {"client.py": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "verify = True\n"}}
+    },
+    {
+      "fixture_id": "auth-bypass-vulnerable",
+      "rule_code": "AUTH-BYPASS-001",
+      "category": "auth",
+      "expectation": "vulnerable",
+      "expected_codes": ["AUTH-BYPASS-001"],
+      "forbidden_codes": [],
+      "files": {"auth.ini": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "allow_anonymous = true\n"}}
+    },
+    {
+      "fixture_id": "auth-bypass-safe",
+      "rule_code": "AUTH-BYPASS-001",
+      "category": "auth",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["AUTH-BYPASS-001"],
+      "files": {"auth.ini": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "allow_anonymous = false\n"}}
+    },
+    {
+      "fixture_id": "infra-privileged-vulnerable",
+      "rule_code": "INFRA-PRIVILEGED-001",
+      "category": "infrastructure",
+      "expectation": "vulnerable",
+      "expected_codes": ["INFRA-PRIVILEGED-001"],
+      "forbidden_codes": [],
+      "files": {"compose.yaml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "services:\n  app:\n    privileged: true\n"}}
+    },
+    {
+      "fixture_id": "infra-privileged-safe",
+      "rule_code": "INFRA-PRIVILEGED-001",
+      "category": "infrastructure",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["INFRA-PRIVILEGED-001"],
+      "files": {"compose.yaml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "services:\n  app:\n    privileged: false\n"}}
+    },
+    {
+      "fixture_id": "infra-public-ingress-vulnerable",
+      "rule_code": "INFRA-PUBLIC-INGRESS-001",
+      "category": "infrastructure",
+      "expectation": "vulnerable",
+      "expected_codes": ["INFRA-PUBLIC-INGRESS-001"],
+      "forbidden_codes": [],
+      "files": {"infra.txt": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "source_ranges = [\"0.0.0.0/0\"]\n"}}
+    },
+    {
+      "fixture_id": "infra-public-ingress-safe",
+      "rule_code": "INFRA-PUBLIC-INGRESS-001",
+      "category": "infrastructure",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["INFRA-PUBLIC-INGRESS-001"],
+      "files": {"infra.txt": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "source_ranges = [\"10.0.0.0/8\"]\n"}}
+    },
+    {
+      "fixture_id": "cloudflare-secret-vulnerable",
+      "rule_code": "CF-SECRET-IN-VARS-001",
+      "category": "cloudflare",
+      "expectation": "vulnerable",
+      "expected_codes": ["CF-SECRET-IN-VARS-001"],
+      "forbidden_codes": [],
+      "files": {"wrangler.toml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "[vars]\napi_token = \"YOUR_TOKEN_HERE\"\n"}}
+    },
+    {
+      "fixture_id": "cloudflare-secret-safe",
+      "rule_code": "CF-SECRET-IN-VARS-001",
+      "category": "cloudflare",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["CF-SECRET-IN-VARS-001"],
+      "files": {"wrangler.toml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "[vars]\napi_base_url = \"https://api.example.invalid\"\n"}}
+    },
+    {
+      "fixture_id": "gha-pr-target-vulnerable",
+      "rule_code": "GHA-PR-TARGET-001",
+      "category": "github_actions",
+      "expectation": "vulnerable",
+      "expected_codes": ["GHA-PR-TARGET-001"],
+      "forbidden_codes": [],
+      "files": {".github/workflows/review.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on:\n  pull_request_target:\npermissions: read-all\njobs: {}\n"}}
+    },
+    {
+      "fixture_id": "gha-pr-target-safe",
+      "rule_code": "GHA-PR-TARGET-001",
+      "category": "github_actions",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["GHA-PR-TARGET-001"],
+      "files": {".github/workflows/review.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on:\n  pull_request:\npermissions: read-all\njobs: {}\n"}}
+    },
+    {
+      "fixture_id": "gha-pr-target-inline-vulnerable",
+      "rule_code": "GHA-PR-TARGET-001",
+      "category": "github_actions",
+      "expectation": "vulnerable",
+      "expected_codes": ["GHA-PR-TARGET-001"],
+      "forbidden_codes": [],
+      "files": {".github/workflows/review-inline.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on: [push, pull_request_target]\npermissions: read-all\njobs: {}\n"}}
+    },
+    {
+      "fixture_id": "gha-pr-target-inline-safe",
+      "rule_code": "GHA-PR-TARGET-001",
+      "category": "github_actions",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["GHA-PR-TARGET-001"],
+      "files": {".github/workflows/review-inline.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on: [push, pull_request]\npermissions: read-all\njobs: {}\n"}}
+    },
+    {
+      "fixture_id": "gha-write-all-vulnerable",
+      "rule_code": "GHA-WRITE-ALL-001",
+      "category": "github_actions",
+      "expectation": "vulnerable",
+      "expected_codes": ["GHA-WRITE-ALL-001"],
+      "forbidden_codes": [],
+      "files": {".github/workflows/write.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on:\n  push:\npermissions: write-all\njobs: {}\n"}}
+    },
+    {
+      "fixture_id": "gha-write-all-safe",
+      "rule_code": "GHA-WRITE-ALL-001",
+      "category": "github_actions",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["GHA-WRITE-ALL-001"],
+      "files": {".github/workflows/write.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on:\n  push:\npermissions:\n  contents: read\njobs: {}\n"}}
+    },
+    {
+      "fixture_id": "gha-unpinned-action-vulnerable",
+      "rule_code": "GHA-UNPINNED-ACTION-001",
+      "category": "github_actions",
+      "expectation": "vulnerable",
+      "expected_codes": ["GHA-UNPINNED-ACTION-001"],
+      "forbidden_codes": [],
+      "files": {".github/workflows/action.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on:\n  push:\npermissions:\n  contents: read\njobs:\n  validation:\n    steps:\n      - uses: actions/checkout@v4\n"}}
+    },
+    {
+      "fixture_id": "gha-unpinned-action-safe",
+      "rule_code": "GHA-UNPINNED-ACTION-001",
+      "category": "github_actions",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["GHA-UNPINNED-ACTION-001"],
+      "files": {".github/workflows/action.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on:\n  push:\npermissions:\n  contents: read\njobs:\n  validation:\n    steps:\n      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567\n"}}
+    },
+    {
+      "fixture_id": "gha-permissions-vulnerable",
+      "rule_code": "GHA-PERMISSIONS-UNDECLARED-001",
+      "category": "github_actions",
+      "expectation": "vulnerable",
+      "expected_codes": ["GHA-PERMISSIONS-UNDECLARED-001"],
+      "forbidden_codes": [],
+      "files": {".github/workflows/permissions.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on:\n  push:\njobs: {}\n"}}
+    },
+    {
+      "fixture_id": "gha-permissions-safe",
+      "rule_code": "GHA-PERMISSIONS-UNDECLARED-001",
+      "category": "github_actions",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["GHA-PERMISSIONS-UNDECLARED-001"],
+      "files": {".github/workflows/permissions.yml": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "on:\n  push:\npermissions:\n  contents: read\njobs: {}\n"}}
+    },
+    {
+      "fixture_id": "dependency-lock-vulnerable",
+      "rule_code": "DEP-LOCK-MISSING-001",
+      "category": "dependency",
+      "expectation": "vulnerable",
+      "expected_codes": ["DEP-LOCK-MISSING-001"],
+      "forbidden_codes": [],
+      "files": {"package.json": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "{}\n"}}
+    },
+    {
+      "fixture_id": "dependency-lock-safe",
+      "rule_code": "DEP-LOCK-MISSING-001",
+      "category": "dependency",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["DEP-LOCK-MISSING-001"],
+      "files": {"package.json": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "{}\n"}, "package-lock.json": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "{}\n"}}
+    },
+    {
+      "fixture_id": "dependency-lifecycle-vulnerable",
+      "rule_code": "DEP-RISKY-SCRIPT-001",
+      "category": "dependency",
+      "expectation": "vulnerable",
+      "expected_codes": ["DEP-RISKY-SCRIPT-001"],
+      "forbidden_codes": [],
+      "files": {"package.json": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "{\"scripts\": {\"prepare\": \"curl https://example.invalid/install\"}}\n"}, "package-lock.json": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "{}\n"}}
+    },
+    {
+      "fixture_id": "dependency-lifecycle-safe",
+      "rule_code": "DEP-RISKY-SCRIPT-001",
+      "category": "dependency",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["DEP-RISKY-SCRIPT-001"],
+      "files": {"package.json": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "{\"scripts\": {\"test\": \"python -m unittest\"}}\n"}, "package-lock.json": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "{}\n"}}
+    },
+    {
+      "fixture_id": "target-blank-vulnerable",
+      "rule_code": "TARGET-BLANK-NOOPENER-001",
+      "category": "browser_navigation",
+      "expectation": "vulnerable",
+      "expected_codes": ["TARGET-BLANK-NOOPENER-001"],
+      "forbidden_codes": [],
+      "files": {"index.html": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "<a href=\"https://example.invalid\" target=\"_blank\">Open</a>\n"}}
+    },
+    {
+      "fixture_id": "target-blank-safe",
+      "rule_code": "TARGET-BLANK-NOOPENER-001",
+      "category": "browser_navigation",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["TARGET-BLANK-NOOPENER-001"],
+      "files": {"index.html": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "<a href=\"https://example.invalid\" target=\"_blank\" rel=\"noopener noreferrer\">Open</a>\n"}}
+    },
+    {
+      "fixture_id": "target-blank-multiline-vulnerable",
+      "rule_code": "TARGET-BLANK-NOOPENER-001",
+      "category": "browser_navigation",
+      "expectation": "vulnerable",
+      "expected_codes": ["TARGET-BLANK-NOOPENER-001"],
+      "forbidden_codes": [],
+      "files": {"component.tsx": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "<a\n  href=\"https://example.invalid\"\n  target=\"_blank\"\n>Open</a>\n"}}
+    },
+    {
+      "fixture_id": "target-blank-multiline-safe",
+      "rule_code": "TARGET-BLANK-NOOPENER-001",
+      "category": "browser_navigation",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["TARGET-BLANK-NOOPENER-001"],
+      "files": {"component.tsx": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "<a\n  href=\"https://example.invalid\"\n  target=\"_blank\"\n  rel=\"noopener noreferrer\"\n>Open</a>\n"}}
+    },
+    {
+      "fixture_id": "public-env-vulnerable",
+      "rule_code": "PUBLIC-ENV-SECRET-001",
+      "category": "public_environment",
+      "expectation": "vulnerable",
+      "expected_codes": ["PUBLIC-ENV-SECRET-001"],
+      "forbidden_codes": [],
+      "files": {".env": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "NEXT_PUBLIC_API_TOKEN=fixture_public_value # example production config\n"}}
+    },
+    {
+      "fixture_id": "public-env-safe",
+      "rule_code": "PUBLIC-ENV-SECRET-001",
+      "category": "public_environment",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["PUBLIC-ENV-SECRET-001"],
+      "files": {".env": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "NEXT_PUBLIC_API_BASE_URL=https://api.example.invalid\n"}, ".env.example": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "NEXT_PUBLIC_API_TOKEN=YOUR_TOKEN_HERE\n"}, "README.txt": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "Document NEXT_PUBLIC_API_TOKEN as a prohibited name, without assigning a value.\n"}}
+    },
+    {
+      "fixture_id": "public-env-vite-reference-vulnerable",
+      "rule_code": "PUBLIC-ENV-SECRET-001",
+      "category": "public_environment",
+      "expectation": "vulnerable",
+      "expected_codes": ["PUBLIC-ENV-SECRET-001"],
+      "forbidden_codes": [],
+      "files": {"client.ts": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "const apiToken = import.meta.env.VITE_API_TOKEN;\n"}}
+    },
+    {
+      "fixture_id": "public-env-vite-reference-safe",
+      "rule_code": "PUBLIC-ENV-SECRET-001",
+      "category": "public_environment",
+      "expectation": "safe",
+      "expected_codes": [],
+      "forbidden_codes": ["PUBLIC-ENV-SECRET-001"],
+      "files": {"client.ts": {"scanner_marker": "routecraft-security: scanner-test-fixture", "content": "const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;\n"}}
+    }
+  ]
+}

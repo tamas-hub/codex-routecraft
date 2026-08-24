@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "suite_id": "routecraft-real-agent-v1",
+  "cases": [
+    {
+      "id": "small-bug-fix-zero-count",
+      "category": "small_bug_fix",
+      "title": "Zero count average",
+      "task": "Fix average() so an empty input returns 0 instead of raising. Preserve normal averages.",
+      "files": [
+        {"path": "metrics.py", "content": "def average(values):\n    return sum(values) / len(values)\n"},
+        {"path": "test_metrics.py", "content": "import unittest\nfrom metrics import average\n\nclass MetricsTests(unittest.TestCase):\n    def test_empty_is_zero(self):\n        self.assertEqual(average([]), 0)\n    def test_average(self):\n        self.assertEqual(average([2, 4]), 3)\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_metrics.py"]],
+      "change_requirements": {"min_changed_files": 1, "required_paths": ["metrics.py"]}
+    },
+    {
+      "id": "multi-file-bug-fix-slug",
+      "category": "multi_file_bug_fix",
+      "title": "Repair slug normalization across modules",
+      "task": "Repair the Article-to-service slug flow. Normalize surrounding and repeated whitespace in models.py, and make article_slug in service.py use that normalized value with lowercase hyphen-separated output. Preserve title_for.",
+      "files": [
+        {"path": "models.py", "content": "class Article:\n    def __init__(self, title):\n        self.title = title\n"},
+        {"path": "service.py", "content": "from models import Article\n\ndef title_for(article):\n    return article.title\n\ndef article_slug(article):\n    return article.title.lower().replace(' ', '_')\n"},
+        {"path": "test_service.py", "content": "import unittest\nfrom models import Article\nfrom service import article_slug, title_for\n\nclass ServiceTests(unittest.TestCase):\n    def test_slug_normalizes_the_model_title(self):\n        article = Article('  Hello   World  ')\n        self.assertEqual(title_for(article), 'Hello World')\n        self.assertEqual(article_slug(article), 'hello-world')\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_service.py"]],
+      "change_requirements": {"min_changed_files": 2, "required_paths": ["models.py", "service.py"]}
+    },
+    {
+      "id": "failing-test-investigation-status",
+      "category": "failing_test_investigation",
+      "title": "Investigate a failing status test",
+      "task": "Run the failing test, identify why active status recognition regressed, and make the smallest production fix. Preserve inactive behavior.",
+      "files": [
+        {"path": "status.py", "content": "def is_active(value):\n    return value == 'active'\n"},
+        {"path": "test_status.py", "content": "import unittest\nfrom status import is_active\n\nclass StatusTests(unittest.TestCase):\n    def test_normalized_active(self):\n        self.assertTrue(is_active(' ACTIVE '))\n    def test_inactive(self):\n        self.assertFalse(is_active('disabled'))\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_status.py"]],
+      "change_requirements": {"min_changed_files": 1, "required_paths": ["status.py"]}
+    },
+    {
+      "id": "new-bounded-feature-token-mask",
+      "category": "new_bounded_feature",
+      "title": "Add bounded token masking",
+      "task": "Add masked_token(value, visible=4) to auth.py. It must reveal only the final visible characters, return all asterisks when visible is zero, and reject negative visible values with ValueError. Preserve token_matches.",
+      "files": [
+        {"path": "auth.py", "content": "def token_matches(expected, supplied):\n    return expected == supplied\n"},
+        {"path": "test_auth.py", "content": "import unittest\nfrom auth import masked_token, token_matches\n\nclass AuthTests(unittest.TestCase):\n    def test_masked_token(self):\n        self.assertEqual(masked_token('abcdefgh', 3), '*****fgh')\n        self.assertEqual(masked_token('abc', 0), '***')\n        with self.assertRaises(ValueError):\n            masked_token('abc', -1)\n    def test_existing_comparison(self):\n        self.assertTrue(token_matches('abc', 'abc'))\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_auth.py"]],
+      "change_requirements": {"min_changed_files": 1, "required_paths": ["auth.py"]}
+    },
+    {
+      "id": "security-config-production-defaults",
+      "category": "security_configuration_fix",
+      "title": "Harden production configuration",
+      "task": "Harden load_settings for production: overrides must not enable debug and allowed_hosts must not contain a wildcard. Preserve explicit safe hosts and do not mutate DEFAULTS.",
+      "files": [
+        {"path": "settings.py", "content": "DEFAULTS = {'debug': False, 'allowed_hosts': ['localhost']}\n\ndef load_settings(overrides):\n    settings = dict(DEFAULTS)\n    settings.update(overrides)\n    return settings\n"},
+        {"path": "test_settings.py", "content": "import unittest\nfrom settings import DEFAULTS, load_settings\n\nclass SettingsTests(unittest.TestCase):\n    def test_rejects_unsafe_production_overrides(self):\n        with self.assertRaises(ValueError):\n            load_settings({'debug': True})\n        with self.assertRaises(ValueError):\n            load_settings({'allowed_hosts': ['*']})\n    def test_preserves_safe_hosts_and_defaults(self):\n        self.assertEqual(load_settings({'allowed_hosts': ['app.example']}), {'debug': False, 'allowed_hosts': ['app.example']})\n        self.assertEqual(DEFAULTS, {'debug': False, 'allowed_hosts': ['localhost']})\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_settings.py"]],
+      "change_requirements": {"min_changed_files": 1, "required_paths": ["settings.py"]}
+    },
+    {
+      "id": "ci-fix-unittest-discovery",
+      "category": "ci_fix",
+      "title": "Fix GitHub Actions test discovery",
+      "task": "Fix the GitHub Actions workflow so it runs unittest discovery against the tests directory. Do not weaken or skip the tests.",
+      "files": [
+        {"path": "counter.py", "content": "def increment(value):\n    return value + 1\n"},
+        {"path": "tests/test_counter.py", "content": "import unittest\nfrom counter import increment\n\nclass CounterTests(unittest.TestCase):\n    def test_increment(self):\n        self.assertEqual(increment(2), 3)\n\nif __name__ == '__main__':\n    unittest.main()\n"},
+        {"path": ".github/workflows/ci.yml", "content": "name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: python -m unittest tests\n"},
+        {"path": "test_ci.py", "content": "import unittest\nfrom pathlib import Path\n\nclass WorkflowTests(unittest.TestCase):\n    def test_workflow_uses_discovery(self):\n        workflow = Path('.github/workflows/ci.yml').read_text(encoding='utf-8')\n        self.assertIn('python -m unittest discover -s tests', workflow)\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_ci.py"], ["python", "-m", "unittest", "discover", "-s", "tests"]],
+      "change_requirements": {"min_changed_files": 1, "required_paths": [".github/workflows/ci.yml"]}
+    },
+    {
+      "id": "schema-migration-profile-v2",
+      "category": "migration_compatibility",
+      "title": "Migrate profile schema",
+      "task": "Implement migrate_profile so schema version 1 records become version 2 with a display_name copied from name. Version 2 records must be returned unchanged.",
+      "files": [
+        {"path": "migration.py", "content": "def migrate_profile(record):\n    return record\n"},
+        {"path": "test_migration.py", "content": "import unittest\nfrom migration import migrate_profile\n\nclass MigrationTests(unittest.TestCase):\n    def test_v1_to_v2(self):\n        self.assertEqual(migrate_profile({'schema_version': 1, 'name': 'Ada'}), {'schema_version': 2, 'name': 'Ada', 'display_name': 'Ada'})\n    def test_v2_is_unchanged(self):\n        value = {'schema_version': 2, 'name': 'Ada', 'display_name': 'A'}\n        self.assertEqual(migrate_profile(value), value)\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_migration.py"]],
+      "change_requirements": {"min_changed_files": 1, "required_paths": ["migration.py"]}
+    },
+    {
+      "id": "docs-code-sync-version",
+      "category": "docs_code_sync",
+      "title": "Synchronize documented version",
+      "task": "Synchronize README.md with the version declared in version.py. Do not change the declared code version.",
+      "files": [
+        {"path": "version.py", "content": "VERSION = '1.2.0'\n"},
+        {"path": "README.md", "content": "# Example\n\nCurrent version: 1.0.0\n"},
+        {"path": "test_docs.py", "content": "import unittest\nfrom pathlib import Path\nfrom version import VERSION\n\nclass DocsTests(unittest.TestCase):\n    def test_readme_matches_version(self):\n        self.assertIn(VERSION, Path('README.md').read_text(encoding='utf-8'))\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_docs.py"]],
+      "change_requirements": {"min_changed_files": 1, "required_paths": ["README.md"]}
+    },
+    {
+      "id": "refactor-shared-normalizer",
+      "category": "refactor",
+      "title": "Extract shared normalizer",
+      "task": "Refactor duplicate normalization in users.py by extracting one shared helper while preserving both public functions and their results.",
+      "files": [
+        {"path": "users.py", "content": "def normalize_email(value):\n    return value.strip().lower()\n\ndef normalize_username(value):\n    return value.strip().lower()\n"},
+        {"path": "test_users.py", "content": "import unittest\nfrom users import normalize_email, normalize_username\n\nclass UserTests(unittest.TestCase):\n    def test_normalizers(self):\n        self.assertEqual(normalize_email(' A@B.COM '), 'a@b.com')\n        self.assertEqual(normalize_username(' Ada '), 'ada')\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_users.py"]],
+      "change_requirements": {"min_changed_files": 1, "required_paths": ["users.py"]}
+    },
+    {
+      "id": "context-heavy-owner-resolution",
+      "category": "context_heavy_investigation",
+      "title": "Investigate owner resolution across repository layers",
+      "task": "Trace owner resolution across config.py, repository.py, and service.py, explain the data flow in a short code comment at the fix, and repair owner_email so it returns the requested resource owner's email rather than the first record.",
+      "files": [
+        {"path": "config.py", "content": "DEFAULT_TENANT = 'public'\n"},
+        {"path": "repository.py", "content": "def find_owner(records, owner_id):\n    return next((record for record in records if record['id'] == owner_id), None)\n"},
+        {"path": "service.py", "content": "from config import DEFAULT_TENANT\nfrom repository import find_owner\n\ndef owner_email(resource, records):\n    owner = records[0] if records else None\n    return owner['email'] if owner and resource.get('tenant', DEFAULT_TENANT) == DEFAULT_TENANT else None\n"},
+        {"path": "test_service.py", "content": "import unittest\nfrom service import owner_email\n\nclass OwnerTests(unittest.TestCase):\n    def test_requested_owner_is_resolved(self):\n        records = [{'id': 'a', 'email': 'a@example.test'}, {'id': 'b', 'email': 'b@example.test'}]\n        self.assertEqual(owner_email({'owner_id': 'b', 'tenant': 'public'}, records), 'b@example.test')\n    def test_non_public_tenant_is_hidden(self):\n        self.assertIsNone(owner_email({'owner_id': 'a', 'tenant': 'private'}, [{'id': 'a', 'email': 'a@example.test'}]))\n\nif __name__ == '__main__':\n    unittest.main()\n"}
+      ],
+      "acceptance": [["python", "-m", "unittest", "test_service.py"]],
+      "change_requirements": {"min_changed_files": 1, "required_paths": ["service.py"]}
+    }
+  ]
+}

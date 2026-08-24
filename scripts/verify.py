@@ -16,13 +16,14 @@ MEMORY_PACKAGE = PLUGIN / "scripts" / "routecraft_memory_lib"
 EVALUATION_SCRIPT = PLUGIN / "scripts" / "routecraft_evaluation.py"
 OBSERVATORY_SCRIPT = PLUGIN / "scripts" / "routecraft_observatory.py"
 COLLECTOR_SCRIPT = PLUGIN / "scripts" / "routecraft_collector.py"
+DEVICE_SCRIPT = PLUGIN / "scripts" / "routecraft_device.py"
 LOCAL_SCRIPT = PLUGIN / "scripts" / "routecraft.py"
 LOCAL_PACKAGE = PLUGIN / "scripts" / "routecraft_local"
 LOCAL_VERSION_FILE = ROOT / "release" / "VERSION"
 LOCAL_VERSION = "1.0.0"
 
-EXPECTED_VERSION = "0.6.0"
-EXPECTED_VERSION_PATTERN = re.compile(r"^0\.6\.0\+codex\.[a-z0-9][a-z0-9-]*$")
+EXPECTED_VERSION = "0.7.0"
+EXPECTED_VERSION_PATTERN = re.compile(r"^0\.7\.0\+codex\.[a-z0-9][a-z0-9-]*$")
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
@@ -80,10 +81,16 @@ required_files = [
     EVALUATION_SCRIPT,
     OBSERVATORY_SCRIPT,
     COLLECTOR_SCRIPT,
+    DEVICE_SCRIPT,
     PLUGIN / "scripts" / "routecraft_control_center.py",
     PLUGIN / "scripts" / "routecraft_agents_optimizer.py",
     PLUGIN / "scripts" / "routecraft_hardener.py",
     PLUGIN / "scripts" / "routecraft_benchmark_lab.py",
+    PLUGIN / "scripts" / "routecraft_real_benchmark.py",
+    PLUGIN / "scripts" / "routecraft_security_validation.py",
+    PLUGIN / "scripts" / "routecraft_execution_graph.py",
+    PLUGIN / "scripts" / "routecraft_graph_cli.py",
+    PLUGIN / "scripts" / "routecraft_graph_telemetry.py",
     PLUGIN / "scripts" / "routecraft_endpoint_migration.py",
     LOCAL_SCRIPT,
     LOCAL_PACKAGE / "__init__.py",
@@ -108,6 +115,9 @@ required_files = [
     ROOT / "samples" / "session-end-template.md",
     ROOT / "samples" / "evaluation-suite.json",
     ROOT / "samples" / "benchmark-lab-fixture.json",
+    ROOT / "samples" / "graph-ir-v1-fast-path.json",
+    ROOT / "samples" / "real-agent-benchmark-suite.json",
+    ROOT / "samples" / "security-validation-fixtures.json",
     LOCAL_VERSION_FILE,
     ROOT / "release" / "README-JA.md",
     ROOT / "release" / "UNINSTALL-JA.md",
@@ -128,6 +138,8 @@ required_files = [
     ROOT / "docs" / "PERSISTENT_DECISION_LAYER.ja.md",
     ROOT / "docs" / "MEMORY_EVALUATION.md",
     ROOT / "docs" / "MEMORY_EVALUATION.ja.md",
+    ROOT / "docs" / "ADR-0007-EVIDENCE-DRIVEN-DURABLE-GRAPH.ja.md",
+    ROOT / "docs" / "ROUTECRAFT-0.7-ARCHITECTURE.ja.md",
     ROOT / "docs" / "product-spec-v1.md",
     ROOT / "docs" / "architecture-v1.md",
     ROOT / "docs" / "data-model-v1.md",
@@ -148,6 +160,10 @@ required_files = [
     ROOT / "tests" / "test_routecraft_local_cli.py",
     ROOT / "tests" / "test_routecraft_local_release.py",
     ROOT / "tests" / "test_routecraft_control_center_runtime.py",
+    ROOT / "tests" / "test_routecraft_graph_07_kernel.py",
+    ROOT / "tests" / "test_routecraft_graph_telemetry.py",
+    ROOT / "tests" / "test_routecraft_real_benchmark.py",
+    ROOT / "tests" / "test_routecraft_security_validation.py",
     ROOT / "README.md",
     ROOT / "README.ja.md",
     ROOT / "LICENSE",
@@ -157,6 +173,14 @@ required_files = [
 for required in required_files:
     if not required.is_file():
         fail(f"Missing required file: {required.relative_to(ROOT)}")
+
+for required in (
+    "__init__.py", "canonical.py", "compiler.py", "constants.py", "contracts.py", "engine.py",
+    "ir.py", "migration.py", "policy.py", "scheduler.py", "state.py", "store.py", "telemetry.py",
+):
+    graph_file = PLUGIN / "scripts" / "routecraft_graph" / required
+    if not graph_file.is_file():
+        fail(f"Missing required file: {graph_file.relative_to(ROOT)}")
 
 manifest = load_json(manifest_path) if manifest_path.is_file() else {}
 market = load_json(market_path) if market_path.is_file() else {}
@@ -196,6 +220,11 @@ if not isinstance(manifest.get("version"), str) or not EXPECTED_VERSION_PATTERN.
     fail(f"plugin.json version must be {EXPECTED_VERSION}+codex.<cachebuster>")
 if manifest.get("skills") != "./skills/":
     fail("plugin.json skills must be ./skills/")
+if DEVICE_SCRIPT.is_file():
+    device_source = DEVICE_SCRIPT.read_text(encoding="utf-8")
+    device_version = re.search(r'^VERSION\s*=\s*"([^"]+)"\s*$', device_source, re.MULTILINE)
+    if not device_version or device_version.group(1) != EXPECTED_VERSION:
+        fail(f"routecraft_device.py VERSION must be {EXPECTED_VERSION}")
 keywords = set(manifest.get("keywords", [])) if isinstance(manifest.get("keywords"), list) else set()
 for keyword in {"persistent-memory", "decision-retrieval", "cross-device", "github-source-of-truth", "memory-evaluation", "observability"}:
     if keyword not in keywords:
@@ -351,6 +380,8 @@ if LOCAL_VERSION_FILE.is_file() and LOCAL_VERSION_FILE.read_text(encoding="utf-8
 local_init = LOCAL_PACKAGE / "__init__.py"
 if local_init.is_file() and f'VERSION = "{LOCAL_VERSION}"' not in local_init.read_text(encoding="utf-8"):
     fail("routecraft_local.VERSION does not match release/VERSION")
+if local_init.is_file() and f'RUNTIME_VERSION = "{EXPECTED_VERSION}"' not in local_init.read_text(encoding="utf-8"):
+    fail("routecraft_local.RUNTIME_VERSION does not match plugin runtime version")
 if LOCAL_SCRIPT.is_file() and "routecraft_local.cli import main" not in LOCAL_SCRIPT.read_text(encoding="utf-8"):
     fail("routecraft.py must launch routecraft_local.cli")
 local_implementation = "\n".join(

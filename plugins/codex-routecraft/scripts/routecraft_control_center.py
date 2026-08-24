@@ -8,25 +8,63 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import urllib.request
+import urllib.parse
 from pathlib import Path
 
-from routecraft_collector import collect_v3, enabled, payload_batches, validate_v3
+from routecraft_collector import collect_v4, enabled, payload_batches, validate_payload
+
+DEFAULT_CONTROL_CENTER_ORIGIN = "https://routecraft.tama812.chatgpt.site"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirect())
+
+
+def _validated_endpoint(endpoint: str) -> str | None:
+    try:
+        target = urllib.parse.urlsplit(endpoint)
+        allowed = urllib.parse.urlsplit(os.environ.get("ROUTECRAFT_CONTROL_CENTER_ALLOWED_ORIGIN", DEFAULT_CONTROL_CENTER_ORIGIN))
+    except ValueError:
+        return None
+    if target.scheme != "https" or allowed.scheme != "https" or target.username or target.password or target.fragment or target.query:
+        return None
+    if target.port not in {None, 443} or allowed.port not in {None, 443}:
+        return None
+    if target.hostname != allowed.hostname or target.path.rstrip("/") != "/api/ingest":
+        return None
+    return urllib.parse.urlunsplit(("https", target.hostname or "", "/api/ingest", "", ""))
+
+
+def _read_token(path: Path) -> str | None:
+    try:
+        if not path.is_file() or path.is_symlink(): return None
+        if os.name != "nt" and stat.S_IMODE(path.stat().st_mode) & 0o077: return None
+        value = path.read_text(encoding="utf-8").strip()
+        return value if len(value) >= 32 else None
+    except OSError:
+        return None
 
 
 def deliver(endpoint: str, token_file: Path, payload: dict[str, object], sites_bypass_token_file: Path | None = None) -> dict[str, object]:
     if not enabled():
         return {"ok": True, "delivered": False, "state": "disabled"}
-    if not endpoint.startswith("https://"):
+    endpoint = _validated_endpoint(endpoint)
+    if endpoint is None:
         return {"ok": False, "delivered": False, "state": "unavailable"}
     try:
-        token = token_file.read_text(encoding="utf-8").strip()
-        if len(token) < 32 or not validate_v3(payload):
+        token = _read_token(token_file)
+        if token is None or not validate_payload(payload):
             return {"ok": False, "delivered": False, "state": "unavailable"}
-        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + token, "User-Agent": "RouteCraft-Collector/3"}
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + token, "User-Agent": "RouteCraft-Collector/4"}
         if sites_bypass_token_file is not None:
-            bypass = sites_bypass_token_file.read_text(encoding="utf-8").strip()
-            if len(bypass) < 32:
+            bypass = _read_token(sites_bypass_token_file)
+            if bypass is None:
                 return {"ok": False, "delivered": False, "state": "unavailable"}
             headers["OAI-Sites-Authorization"] = "Bearer " + bypass
         batches = payload_batches(payload)
@@ -37,7 +75,7 @@ def deliver(endpoint: str, token_file: Path, payload: dict[str, object], sites_b
                 headers=headers,
                 method="POST",
             )
-            with urllib.request.urlopen(request, timeout=15) as response:
+            with _NO_REDIRECT_OPENER.open(request, timeout=15) as response:
                 if not 200 <= int(response.status) < 300:
                     return {"ok": False, "delivered": False, "state": "unavailable"}
         return {"ok": True, "delivered": True, "state": "ok", "batches": len(batches)}
@@ -53,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir")
     parser.add_argument("--sites-bypass-token-file", type=Path)
     args = parser.parse_args(argv)
-    payload = collect_v3(source_root=args.source_root, data_dir=args.data_dir)
+    payload = collect_v4(source_root=args.source_root, data_dir=args.data_dir)
     result = deliver(args.endpoint, args.token_file, payload, args.sites_bypass_token_file)
     print(json.dumps(result, separators=(",", ":")))
     return 0 if result["ok"] else 1

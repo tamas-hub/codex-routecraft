@@ -2,7 +2,7 @@
 
 RouteCraftは、**Solを設計・統合・最終判断に残し、実装だけを必要に応じてLuna/Terraへ振り分け、過去に獲得した判断を次のCodexへ相続する**オーケストレーション・プラグインです。
 
-## RouteCraft Local Runtime 0.6.0
+## RouteCraft Local Runtime 0.7.0
 
 このrepositoryには、既存のMarkdown Decision Storeとは独立したローカル製品「RouteCraft Memory Local」も含まれます。
 
@@ -36,6 +36,8 @@ routecraft loop status|configure
 routecraft backup|restore|doctor|ui
 routecraft doctor --scope health|all
 routecraft collector collect
+routecraft graph plan|validate|run|resume|status|cancel|export
+routecraft policy status|candidates
 routecraft context engine --project <ID>
 routecraft agents analyze|preview|apply
 routecraft security analyze|preview|apply
@@ -44,15 +46,15 @@ routecraft update --apply
 routecraft migrate local-db|decision-store|endpoint
 ```
 
-0.6.0のUnified Collectorは既存`routecraft_telemetry.py`を唯一のraw rollout parserとして使い、schema v3で`device_health`、`memory_metrics`、`usage_snapshots`、`benchmark_runs`、`security_scans`、`system_status`だけを追加します。各summaryは独立して失敗でき、prompt・会話・file本文・Memory/Decision本文・path・session ID・token等はcollector payloadへ出しません。`CONTROL_CENTER_ENABLED`が未設定またはfalseなら、Control Center transportはimportも送信もされず、Local Runtimeは単独で動きます。
+0.7.0は、0.6のSingle Node Fast PathへGraph IR v1、fail-closed compiler、Evidence Gate、専用SQLite Graph State Store、hash-chain checkpoint、resume、Selective Retry、Verified Constraint、Policy Labを追加します。既定modeは`observe`で、実証済みtask classだけをallowlistで`enforce`できます。Unified Collectorはschema v1〜v3を維持し、v4のprivacy-safe Graph／Benchmark／Security集計だけを追加します。prompt・会話・source／file本文・Memory／Decision本文・path・credential・raw node outputは送信しません。取得不能値は`null`であり、0へ置換しません。`CONTROL_CENTER_ENABLED`が未設定またはfalseでもLocal Runtimeは単独で動きます。
 
 ### 製品境界とSource of Truth
 
-Local RuntimeとControl Center Add-onは、別repository・別package・別version・別licenseで配布できる境界を維持します。schema v3のversioned JSON contractだけが両者を接続し、Control Center停止・未契約・通信障害はLocal Runtimeの処理結果に影響しません。
+Local RuntimeとControl Center Add-onは、別repository・別package・別version・別licenseで配布できる境界を維持します。schema v1〜v4のversioned JSON contractだけが両者を接続し、schema v4はv1〜v3を削除せずHardening / Graph evidenceの集計だけを追加します。Control Center停止・未契約・通信障害はLocal Runtimeの処理結果に影響しません。
 
 | 領域 | Source of Truth | 永続状態 | 外部表示 |
 | --- | --- | --- | --- |
-| Routing / Hooks / Agents / Collector | `codex-routecraft` | 端末ローカル設定 | optional schema v3 summary |
+| Routing / Hooks / Agents / Collector | `codex-routecraft` | 端末ローカル設定 | optional schema v1〜v4 summary |
 | Project Memory | RouteCraft Memory Local | local SQLite | aggregate counts only |
 | Reusable Decision | Private Decision Store | separate private Git store | aggregate counts only |
 | Benchmark / Security | local engine + adapter | local report | aggregate summary only |
@@ -66,7 +68,7 @@ Security Hardenerの静的検査は、Git追跡済み（非Git時は上限付き
 
 Loop連携は明示的に有効化した場合だけ、登録済みprojectのCompact ContextをSessionStartへ注入し、正常なStop時にread-only Git metadataから未確認のsession summaryを保存します。raw transcriptは読まず、projectを自動作成しません。Decision Storeは汎用Case/Rule、Memory Localはproject作業記憶として分離します。反映には新しいCodexタスクが必要です。
 
-デモ、配布ZIP、復元、既知制約は[製品仕様](docs/product-spec-v1.md)、[セキュリティ](docs/security-and-privacy.md)、[リリース計画](docs/release-plan-v1.md)を参照してください。
+0.7の設計判断は[ADR-0007](docs/ADR-0007-EVIDENCE-DRIVEN-DURABLE-GRAPH.ja.md)、実装契約は[RouteCraft 0.7 Architecture](docs/ROUTECRAFT-0.7-ARCHITECTURE.ja.md)を参照してください。0.6 foundation、デモ、配布ZIP、復元、既知制約も引き続き保持します。
 
 狙いは「サブエージェントを大量に使うこと」でも「巨大プロンプトを毎回読むこと」でもありません。
 

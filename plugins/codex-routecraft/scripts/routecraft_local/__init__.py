@@ -7,7 +7,9 @@ surface and can be imported into the local project database explicitly.
 
 from __future__ import annotations
 
+RUNTIME_VERSION = "0.7.0"
 VERSION = "1.0.0"
+MEMORY_LOCAL_VERSION = VERSION
 SCHEMA_VERSION = 1
 
 MEMORY_TYPES = (
@@ -32,6 +34,8 @@ __all__ = [
     "CONTEXT_PROFILES",
     "IMPORTANCE_LEVELS",
     "MEMORY_TYPES",
+    "MEMORY_LOCAL_VERSION",
+    "RUNTIME_VERSION",
     "SCHEMA_VERSION",
     "VERSION",
 ]

@@ -1,7 +1,7 @@
 {
   "name": "codex-routecraft",
-  "version": "0.6.0+codex.20260824055540",
-  "description": "Unified RouteCraft Local Runtime for orchestration, hooks, agents, memory adapters, context compilation, quality checks, and optional Control Center telemetry.",
+  "version": "0.7.0+codex.20260824134243",
+  "description": "Unified RouteCraft Local Runtime with evidence-driven durable execution graphs, routing, memory, quality checks, and optional Control Center telemetry.",
   "author": {
     "name": "tamas-hub",
     "url": "https://github.com/tamas-hub"
@@ -22,13 +22,15 @@
     "cross-device",
     "github-source-of-truth",
     "memory-evaluation",
-    "observability"
+    "observability",
+    "durable-execution",
+    "execution-graph"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "RouteCraft for Codex",
-    "shortDescription": "Unified local routing, memory, context, quality, and optional Control Center telemetry.",
-    "longDescription": "RouteCraft for Codex is the unified Local Runtime for Sol-led routing, bounded companion-agent delegation, hooks, local project continuity, private reusable decisions, context compilation, diagnostics, benchmark execution, and safe security checks. Core behavior remains fully supported without the separately versioned RouteCraft Control Center Add-on. When explicitly enabled, the privacy-filtered Collector sends only versioned aggregate telemetry; Control Center downtime never blocks routing, hooks, agents, memory, context compilation, benchmark execution, or security scans.",
+    "shortDescription": "Durable local execution graphs, adaptive routing, memory, quality, and optional telemetry.",
+    "longDescription": "RouteCraft for Codex is the unified Local Runtime for Sol-led routing, evidence-driven durable execution graphs, bounded companion-agent delegation, checkpoints and resume, selective retry, hooks, local project continuity, private reusable decisions, diagnostics, benchmark execution, and safe security checks. The 0.6 single-node fast path remains available. Core behavior remains fully supported without the separately versioned RouteCraft Control Center Add-on. When explicitly enabled, the privacy-filtered Collector sends only versioned aggregate telemetry; Control Center downtime never blocks graph execution, routing, hooks, agents, memory, benchmark execution, or security scans.",
     "developerName": "tamas-hub",
     "category": "Productivity",
     "capabilities": [

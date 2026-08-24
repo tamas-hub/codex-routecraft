@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "device_id": "example-device-identity",
+  "observed_at": "2026-08-24T00:00:00Z",
+  "components": [
+    {
+      "component_kind": "ai_usage_updater",
+      "status": "disabled",
+      "replacement_kind": "unified_usage_adapter",
+      "enabled": false,
+      "running": false,
+      "replacement_health": "healthy",
+      "missing_snapshots": 0,
+      "duplicate_ingestions": 0,
+      "last_error_at": null
+    },
+    {
+      "component_kind": "codex_meter_startup",
+      "status": "observing",
+      "replacement_kind": "none",
+      "enabled": null,
+      "running": null,
+      "replacement_health": "unknown",
+      "missing_snapshots": null,
+      "duplicate_ingestions": null,
+      "last_error_at": null
+    },
+    {
+      "component_kind": "observatory_legacy",
+      "status": "observing",
+      "replacement_kind": "control_center",
+      "enabled": null,
+      "running": null,
+      "replacement_health": "unknown",
+      "missing_snapshots": null,
+      "duplicate_ingestions": null,
+      "last_error_at": null
+    },
+    {
+      "component_kind": "collector_legacy",
+      "status": "observing",
+      "replacement_kind": "unified_collector",
+      "enabled": null,
+      "running": null,
+      "replacement_health": "unknown",
+      "missing_snapshots": null,
+      "duplicate_ingestions": null,
+      "last_error_at": null
+    }
+  ]
+}

@@ -17,6 +17,8 @@ from typing import Iterable, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SCRIPTS = ROOT / "plugins" / "codex-routecraft" / "scripts"
 PACKAGE = SOURCE_SCRIPTS / "routecraft_local"
+GRAPH_PACKAGE = SOURCE_SCRIPTS / "routecraft_graph"
+DECISION_PACKAGE = SOURCE_SCRIPTS / "routecraft_memory_lib"
 RELEASE = ROOT / "release"
 SAMPLES = ROOT / "samples"
 VERSION = (RELEASE / "VERSION").read_text(encoding="utf-8").strip()
@@ -39,8 +41,28 @@ def _safe_archive_path(value: str) -> str:
 
 
 def _entries(platform_name: str) -> list[Entry]:
+    runtime_scripts = (
+        "routecraft.py",
+        "routecraft_agents_optimizer.py",
+        "routecraft_benchmark_lab.py",
+        "routecraft_collector.py",
+        "routecraft_control_center.py",
+        "routecraft_device.py",
+        "routecraft_endpoint_migration.py",
+        "routecraft_evaluation.py",
+        "routecraft_execution_graph.py",
+        "routecraft_graph_cli.py",
+        "routecraft_graph_telemetry.py",
+        "routecraft_hardener.py",
+        "routecraft_legacy_observation.py",
+        "routecraft_memory.py",
+        "routecraft_observatory.py",
+        "routecraft_real_benchmark.py",
+        "routecraft_security_validation.py",
+        "routecraft_telemetry.py",
+    )
     common = [
-        Entry(SOURCE_SCRIPTS / "routecraft.py", f"{PREFIX}/app/routecraft.py"),
+        *(Entry(SOURCE_SCRIPTS / name, f"{PREFIX}/app/{name}") for name in runtime_scripts),
         Entry(ROOT / "LICENSE", f"{PREFIX}/LICENSE"),
         Entry(ROOT / "CHANGELOG.md", f"{PREFIX}/CHANGELOG.md"),
         Entry(RELEASE / "VERSION", f"{PREFIX}/VERSION"),
@@ -50,21 +72,30 @@ def _entries(platform_name: str) -> list[Entry]:
         Entry(SAMPLES / "demo-memories.jsonl", f"{PREFIX}/samples/demo-memories.jsonl"),
         Entry(SAMPLES / "session-end-template.md", f"{PREFIX}/samples/session-end-template.md"),
         Entry(SAMPLES / "evaluation-suite.json", f"{PREFIX}/samples/evaluation-suite.json"),
+        Entry(SAMPLES / "benchmark-lab-fixture.json", f"{PREFIX}/samples/benchmark-lab-fixture.json"),
+        Entry(SAMPLES / "graph-ir-v1-fast-path.json", f"{PREFIX}/samples/graph-ir-v1-fast-path.json"),
+        Entry(SAMPLES / "legacy-observation-facts.json", f"{PREFIX}/samples/legacy-observation-facts.json"),
+        Entry(SAMPLES / "real-agent-benchmark-suite.json", f"{PREFIX}/samples/real-agent-benchmark-suite.json"),
+        Entry(SAMPLES / "security-validation-fixtures.json", f"{PREFIX}/samples/security-validation-fixtures.json"),
     ]
     docs = (
         "product-spec-v1.md",
         "architecture-v1.md",
         "data-model-v1.md",
         "security-and-privacy.md",
+        "HARDENING_GRAPH_FOUNDATION.ja.md",
+        "ADR-0007-EVIDENCE-DRIVEN-DURABLE-GRAPH.ja.md",
+        "ROUTECRAFT-0.7-ARCHITECTURE.ja.md",
         "release-plan-v1.md",
         "test-plan-v1.md",
     )
     common.extend(Entry(ROOT / "docs" / name, f"{PREFIX}/docs/{name}") for name in docs)
-    for path in sorted(PACKAGE.rglob("*")):
-        if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
-            continue
-        relative = path.relative_to(SOURCE_SCRIPTS).as_posix()
-        common.append(Entry(path, f"{PREFIX}/app/{relative}"))
+    for package in (PACKAGE, GRAPH_PACKAGE, DECISION_PACKAGE):
+        for path in sorted(package.rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+                continue
+            relative = path.relative_to(SOURCE_SCRIPTS).as_posix()
+            common.append(Entry(path, f"{PREFIX}/app/{relative}"))
     if platform_name == "windows":
         common.extend(
             [

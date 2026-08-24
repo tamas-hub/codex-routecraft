@@ -57,6 +57,19 @@ class RouteCraftFleetTests(unittest.TestCase):
             memory_branch="main",
         )
 
+    def test_public_version_matches_runtime_release(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(DEVICE_SCRIPT), "--version"],
+            text=True,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+
+        self.assertEqual(result.stdout.strip(), "routecraft-device 0.7.0")
+        self.assertEqual(result.stderr, "")
+
     def test_normalize_remote_accepts_common_github_forms(self) -> None:
         values = {
             DEVICE.normalize_remote("https://github.com/Example/Repo.git"),

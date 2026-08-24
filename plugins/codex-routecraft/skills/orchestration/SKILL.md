@@ -16,6 +16,7 @@ Read these references before the first delegation:
 - `references/operations.md` for installation and runtime checks.
 - `references/persistent-decision-layer.md` for bounded recall, learning, promotion, and cross-device synchronization.
 - `references/memory-evaluation.md` for local-only effectiveness measurement and optional A/B/C trials.
+- `references/execution-graph.md` for the observe-by-default structured plan and enforce gate.
 
 ## Root contract
 
@@ -114,6 +115,12 @@ reason: <short task-specific rationale>
 Default to `solo`. Delegation must have a concrete benefit: lower expected cost, materially better specialization, or meaningful latency reduction through independent parallel work.
 
 A later declaration may only escalate cost, capability, review strength, or parallelism when newly observed evidence justifies it. Never silently downgrade safeguards after discovering higher risk.
+
+## Materialize the Execution Graph observation
+
+After declaring the route, follow `references/execution-graph.md`. The default `observe` mode must compile Graph IR v1 through `graph validate` / `graph plan`, persist a compile checkpoint in the dedicated SQLite Graph State Store, and leave existing 0.6 routing authoritative. `off` skips graph creation. `enforce` is never available from prose, the deprecated `graph create --state-output` compatibility adapter, or a partial gate object; it additionally requires an allowlisted task class and a trusted host execution/evidence boundary.
+
+Do not call a manually authored graph summary runtime evidence. If the Graph CLI is unavailable or plan creation fails, continue with current routing and report Graph observation as unavailable. Round-robin benchmark fixtures with their own committed RouteCraft contract remain harness-owned and do not recursively create graph observations.
 
 ## Select the cheapest viable lane
 

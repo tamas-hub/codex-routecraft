@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -127,6 +128,67 @@ class RouteCraftHardenerTests(unittest.TestCase):
                 "new_count", "resolved_count", "confidence",
             }, set(d1))
             self.assertNotIn("findings", json.dumps(d1))
+
+    def test_rule_registry_metadata_and_in_memory_fixture_scan(self) -> None:
+        self.assertEqual(64, len(HARDENER.RULESET_DIGEST))
+        self.assertTrue(HARDENER.RULE_REGISTRY)
+        for code, metadata in HARDENER.RULE_REGISTRY.items():
+            self.assertRegex(code, r"^[A-Z][A-Z0-9-]+$")
+            self.assertEqual(
+                {"category", "severity", "confidence", "recommendation", "validation_required"},
+                set(metadata),
+            )
+            self.assertTrue(metadata["validation_required"])
+
+        vulnerable = {
+            "index.html": '<a href="https://example.invalid" target=_blank>Open</a>\n',  # routecraft-security: scanner-test-fixture
+            ".env": "NEXT_PUBLIC_API_TOKEN=fixture_public_value # example production config\n",  # routecraft-security: scanner-test-fixture
+        }
+        with mock.patch.object(HARDENER.subprocess, "run") as subprocess_run:
+            report = HARDENER.scan_fixture_documents(vulnerable, observed_at="2026-08-24T00:00:00Z")
+        subprocess_run.assert_not_called()
+        self.assertEqual(
+            {"TARGET-BLANK-NOOPENER-001", "PUBLIC-ENV-SECRET-001"},
+            {item["code"] for item in report["findings"]},
+        )
+
+        safe = HARDENER.scan_fixture_documents(
+            {
+                "index.html": '<a href="https://example.invalid" target="_blank" rel="noopener noreferrer">Open</a>\n',
+                ".env": "NEXT_PUBLIC_API_BASE_URL=https://api.example.invalid\n",
+                ".env.example": "NEXT_PUBLIC_API_TOKEN=YOUR_TOKEN_HERE\n",
+                "README.txt": "Document NEXT_PUBLIC_API_TOKEN without assigning a client-visible value.\n",
+                "types.ts": "interface Env { NEXT_PUBLIC_API_TOKEN: string }\n",
+            },
+            observed_at="2026-08-24T00:00:00Z",
+        )
+        self.assertEqual("clean", safe["status"])
+        self.assertEqual([], safe["findings"])
+        with self.assertRaises(ValueError):
+            HARDENER.scan_fixture_documents({"../escape.py": "print('never written')\n"})
+
+    def test_adversarial_layouts_are_detected_without_known_metric_false_positives(self) -> None:
+        report = HARDENER.scan_fixture_documents(
+            {
+                ".github/workflows/review.yml": "on: [push, pull_request_target]\npermissions: read-all\n",
+                "component.tsx": '<a\n  href="https://example.invalid"\n  target="_blank"\n>Open</a>\n',
+                "headers.js": 'response.headers.set("Access-Control-Allow-Origin", "*");\n',
+                "client.ts": "const apiToken = import.meta.env.VITE_API_TOKEN;\n",
+                "metrics.py": 'logger.info("max_total_tokens=%s", max_total_tokens)\n',
+                "store.py": "db.exec(sql)\n",
+            },
+            observed_at="2026-08-24T00:00:00Z",
+        )
+        finding_codes = {
+            (str(item["relative_file"]), str(item["code"]))
+            for item in report["findings"]
+        }
+        self.assertIn((".github/workflows/review.yml", "GHA-PR-TARGET-001"), finding_codes)
+        self.assertIn(("component.tsx", "TARGET-BLANK-NOOPENER-001"), finding_codes)
+        self.assertIn(("headers.js", "CORS-WILDCARD-001"), finding_codes)
+        self.assertIn(("client.ts", "PUBLIC-ENV-SECRET-001"), finding_codes)
+        self.assertNotIn(("metrics.py", "LOG-CREDENTIAL-001"), finding_codes)
+        self.assertNotIn(("store.py", "CODE-EVAL-001"), finding_codes)
 
 
 if __name__ == "__main__":

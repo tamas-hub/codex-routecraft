@@ -43,6 +43,18 @@ class RouteCraftLocalReleaseTests(unittest.TestCase):
         self.assertTrue(result["inactive_excluded"])
         self.assertEqual([], result["context_duplicate_titles"])
 
+    def test_orchestration_reference_uses_the_canonical_durable_graph_path(self) -> None:
+        reference = (ROOT / "plugins" / "codex-routecraft" / "skills" / "orchestration" / "references" / "execution-graph.md").read_text(encoding="utf-8")
+        skill = (ROOT / "plugins" / "codex-routecraft" / "skills" / "orchestration" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("graph validate", reference)
+        self.assertIn("graph plan", reference)
+        self.assertIn("graph status", reference)
+        self.assertIn("dedicated SQLite Graph State Store", reference)
+        self.assertNotIn("graph create `", reference)
+        self.assertNotIn("--state-output <caller-work>", reference)
+        self.assertIn("Graph IR v1", skill)
+        self.assertIn("trusted host execution/evidence boundary", skill)
+
     def test_release_builder_is_deterministic_and_smoke_runs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -66,6 +78,16 @@ class RouteCraftLocalReleaseTests(unittest.TestCase):
                     self.assertIsNone(archive.testzip())
                     names = archive.namelist()
                     self.assertTrue(any(name.endswith("/app/routecraft_local/loop_bridge.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_execution_graph.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_graph_cli.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_graph/store.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_graph/engine.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_graph_telemetry.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_legacy_observation.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_real_benchmark.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_security_validation.py") for name in names))
+                    self.assertTrue(any(name.endswith("/docs/HARDENING_GRAPH_FOUNDATION.ja.md") for name in names))
+                    self.assertTrue(any(name.endswith("/docs/ADR-0007-EVIDENCE-DRIVEN-DURABLE-GRAPH.ja.md") for name in names))
                     for name in archive.namelist():
                         path = PurePosixPath(name)
                         self.assertFalse(path.is_absolute())
@@ -94,7 +116,7 @@ class RouteCraftLocalReleaseTests(unittest.TestCase):
             root = next(extract.iterdir())
             launcher = root / "app" / "routecraft.py"
             version = self.run_python(str(launcher), "--version", cwd=root)
-            self.assertEqual("routecraft 1.0.0", version.stdout.strip())
+            self.assertEqual("routecraft 0.7.0 (memory-local 1.0.0)", version.stdout.strip())
             data = base / "smoke-data"
             self.run_python(str(launcher), "--data-dir", str(data), "init", cwd=root)
             project = json.loads(

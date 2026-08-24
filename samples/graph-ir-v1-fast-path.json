@@ -1,0 +1,20 @@
+{
+  "graph_id": "g_fast_path_fixture",
+  "graph_schema_version": 1,
+  "graph_revision": 1,
+  "policy_version": "routecraft-production-v1",
+  "task_class": "small_bug_fix",
+  "mode": "observe",
+  "event_classification": "normal",
+  "nodes": [
+    {"node_id":"n_work","node_type":"DETERMINISTIC","objective":"fast path","dependencies":[],"ownership":{"workstream":"fast","write_scopes":[]},"input_schema":{"type":"object"},"output_schema":{"type":"object"},"lane":"none","reasoning_effort":"none","risk":"low","capability_profile":"deterministic-v1","allowed_tools":[],"denied_operations":[],"verification":{"required_evidence_types":["schema_result"]},"gate_policy":{"required":true,"inconclusive":"FAIL","global":false},"retry_policy":{"max_attempts":1,"max_tokens":null,"max_duration_seconds":30,"max_failed_gates":0},"status":"PENDING","attempt":0,"input_hash":null,"output_hash":null,"evidence_refs":[]},
+    {"node_id":"n_accept","node_type":"GATE","objective":"global acceptance","dependencies":["n_work"],"ownership":{"workstream":"accept","write_scopes":[]},"input_schema":{"type":"object"},"output_schema":{"type":"object"},"lane":"none","reasoning_effort":"none","risk":"low","capability_profile":"deterministic-v1","allowed_tools":[],"denied_operations":[],"verification":{"required_evidence_types":["schema_result"]},"gate_policy":{"required":true,"inconclusive":"FAIL","global":true},"retry_policy":{"max_attempts":1,"max_tokens":null,"max_duration_seconds":30,"max_failed_gates":0},"status":"PENDING","attempt":0,"input_hash":null,"output_hash":null,"evidence_refs":[]}
+  ],
+  "edges": [{"from":"n_work","to":"n_accept","edge_type":"depends_on","condition":null,"data_contract":{"producer":"#/result","consumer":"#/input"}}],
+  "contracts": {"intent": {"request_summary":"fast path fixture","objectives":["validate"],"non_goals":[],"constraints":[],"acceptance_criteria":[{"criterion_id":"AC-1","statement":"gate passes"}],"risk_level":"low","external_mutations":[],"approval_requirements":[],"privacy_boundary":{"local_only":["source"],"exportable":["aggregate"]},"budget":{"max_tokens":null,"max_duration_seconds":null,"max_child_runs":null},"deadline_if_known":null}, "global_acceptance": [{"criterion_id":"AC-1","statement":"gate passes"}]},
+  "constraints": [],
+  "budgets": {"max_tokens": null, "max_duration_seconds": null, "max_child_runs": null},
+  "created_at": "2026-08-24T00:00:00Z",
+  "updated_at": "2026-08-24T00:00:00Z",
+  "status": "DRAFT"
+}

@@ -13,7 +13,7 @@ import json
 import os
 import re
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
 SAFE_DEFAULTS = {
@@ -33,6 +33,57 @@ TEXT_NAMES = frozenset({"Dockerfile", "Gemfile", "Pipfile", "Pipfile.lock", "pac
 SECRET_ASSIGNMENT = re.compile(r"(?i)\b(?:api[_-]?(?:key|token)|access[_-]?key|(?:[A-Za-z0-9]+[_-])?(?:secret|token|password)|private[_-]?key)\b\s*[:=]\s*['\"][^'\"\r\n]{8,}['\"]")
 SECRET_PREFIX = re.compile(r"(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)")
 PLACEHOLDER = re.compile(r"(?i)(?:example|placeholder|changeme|not[-_ ]?a[-_ ]?real|your[_-]?(?:token|secret|key)|dummy)")
+CLIENT_EXPOSED_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?i)(?<![A-Z0-9_])['\"]?(?:NEXT_PUBLIC|VITE|REACT_APP|NUXT_PUBLIC|PUBLIC)_[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PRIVATE[_-]?KEY)[A-Z0-9_]*['\"]?\s*(?P<separator>[:=])\s*(?P<value>.*)$"
+)
+RULESET_VERSION = "1.0.0"
+
+
+def _rule(category: str, severity: str, confidence: str, recommendation: str) -> dict[str, object]:
+    return {
+        "category": category,
+        "severity": severity,
+        "confidence": confidence,
+        "recommendation": recommendation,
+        "validation_required": True,
+    }
+
+
+RULE_REGISTRY: dict[str, dict[str, object]] = {
+    "SECRET-STATIC-001": _rule("secrets", "high", "high", "Move the credential to a local secret store or platform secret binding; do not commit it."),
+    "LOG-CREDENTIAL-001": _rule("credential_logging", "medium", "medium", "Log a redacted event code or aggregate, never credential-like values."),
+    "CODE-EVAL-001": _rule("eval", "high", "high", "Replace dynamic code evaluation with structured parsing and an allowlisted dispatcher."),
+    "SHELL-UNSAFE-001": _rule("shell", "high", "high", "Use argument arrays with shell disabled and validate untrusted input."),
+    "SQL-INTERPOLATION-001": _rule("sql", "high", "medium", "Use parameterized queries; keep SQL structure constant and bind values separately."),
+    "CORS-WILDCARD-001": _rule("cors", "medium", "high", "Use an explicit origin allowlist and do not combine credentialed CORS with a wildcard."),
+    "CSP-WEAK-001": _rule("csp", "medium", "high", "Remove unsafe CSP sources where possible; use hashes or nonces for required scripts."),
+    "TLS-VERIFY-DISABLED-001": _rule("tls", "high", "high", "Keep certificate verification enabled outside an explicitly isolated test fixture."),
+    "AUTH-BYPASS-001": _rule("auth", "high", "high", "Require authentication and authorization checks on the protected operation."),
+    "INFRA-PRIVILEGED-001": _rule("infrastructure", "high", "high", "Remove privileged or unconfined execution unless a reviewed isolation exception exists."),
+    "INFRA-PUBLIC-INGRESS-001": _rule("infrastructure", "medium", "medium", "Restrict ingress CIDRs to the smallest documented allowlist."),
+    "CF-SECRET-IN-VARS-001": _rule("cloudflare", "high", "high", "Use a Cloudflare secret binding, not a value in vars/config."),
+    "GHA-PR-TARGET-001": _rule("github_actions", "high", "high", "Avoid pull_request_target for untrusted pull-request code; use a least-privilege pull_request workflow."),
+    "GHA-WRITE-ALL-001": _rule("github_actions", "high", "high", "Declare the minimal job or workflow permissions required."),
+    "GHA-UNPINNED-ACTION-001": _rule("github_actions", "medium", "high", "Pin GitHub Actions uses references to a reviewed full commit SHA."),
+    "GHA-PERMISSIONS-UNDECLARED-001": _rule("github_actions", "low", "medium", "Declare least-privilege workflow permissions explicitly."),
+    "DEP-LOCK-MISSING-001": _rule("dependency", "medium", "high", "Commit a supported dependency lockfile before installing or releasing."),
+    "DEP-RISKY-SCRIPT-001": _rule("dependency", "medium", "medium", "Review lifecycle/download scripts locally; pin inputs and avoid piping remote content to a shell."),
+    "TARGET-BLANK-NOOPENER-001": _rule("browser_navigation", "low", "medium", "Add rel=\"noopener noreferrer\" to target=_blank links that open an untrusted browsing context."),
+    "PUBLIC-ENV-SECRET-001": _rule("public_environment", "high", "medium", "Keep credential-like values out of client-public environment variable namespaces."),
+}
+
+DIAGNOSTIC_REGISTRY: dict[str, dict[str, object]] = {
+    "SCAN-BOUNDED-001": {
+        "category": "scanner_boundary",
+        "severity": "info",
+        "confidence": "high",
+        "recommendation": "Review excluded or size-capped files manually if they are security-relevant.",
+        "validation_required": False,
+    }
+}
+RULESET_DIGEST = hashlib.sha256(
+    json.dumps(RULE_REGISTRY, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+).hexdigest()
 
 
 def _now() -> str:
@@ -118,27 +169,117 @@ def _select_files(root: Path) -> tuple[list[Path], bool]:
     return sorted(selected, key=lambda item: _relative(root, item)), limited
 
 
-def _finding(code: str, severity: str, confidence: str, relative_file: str, line: int, recommendation: str) -> dict[str, object]:
-    return {"code": code, "severity": severity, "confidence": confidence, "relative_file": relative_file, "line": max(1, line), "recommendation": recommendation}
+def _finding(
+    code: str,
+    relative_file: str,
+    line: int,
+    *,
+    severity: str | None = None,
+    confidence: str | None = None,
+    recommendation: str | None = None,
+) -> dict[str, object]:
+    metadata = RULE_REGISTRY.get(code) or DIAGNOSTIC_REGISTRY.get(code)
+    if metadata is None:
+        raise ValueError(f"unregistered security rule: {code}")
+    return {
+        "code": code,
+        "severity": severity or str(metadata["severity"]),
+        "confidence": confidence or str(metadata["confidence"]),
+        "relative_file": relative_file,
+        "line": max(1, line),
+        "recommendation": recommendation or str(metadata["recommendation"]),
+    }
+
+
+def _target_blank_without_noopener(line: str) -> bool:
+    for match in re.finditer(r"(?i)<a\b[^>]*>", line):
+        tag = match.group(0)
+        if not re.search(r"(?i)\btarget\s*=\s*(?:(['\"])_blank\1|_blank(?=\s|>))", tag):
+            continue
+        rel = re.search(r"(?i)\brel\s*=\s*(['\"])(.*?)\1", tag)
+        tokens = {value.casefold() for value in re.split(r"\s+", rel.group(2).strip())} if rel else set()
+        if not {"noopener", "noreferrer"} & tokens:
+            return True
+    return False
+
+
+def _target_blank_without_noopener_lines(text: str) -> set[int]:
+    """Return opening-tag line numbers missing a safe opener policy.
+
+    JSX/HTML attributes are often formatted across several lines. The
+    scanner remains bounded to a single source document and a 4 KiB opening
+    tag, but does not make a line-break turn a dangerous ``target`` into an
+    invisible one.
+    """
+    violating_lines: set[int] = set()
+    for match in re.finditer(r"(?is)<a\b[^>]{0,4096}>", text):
+        tag = match.group(0)
+        if not re.search(r"(?i)\btarget\s*=\s*(?:(['\"])_blank\1|_blank(?=\s|>))", tag):
+            continue
+        rel = re.search(r"(?i)\brel\s*=\s*(['\"])(.*?)\1", tag, re.DOTALL)
+        tokens = {value.casefold() for value in re.split(r"\s+", rel.group(2).strip())} if rel else set()
+        if not {"noopener", "noreferrer"} & tokens:
+            violating_lines.add(text.count("\n", 0, match.start()) + 1)
+    return violating_lines
+
+
+def _public_env_credential_assignment(relative_file: str, line: str) -> bool:
+    # Vite replaces ``import.meta.env.VITE_*`` at build time. A secret-like
+    # name is therefore public even when it is only referenced in a define or
+    # a client module rather than assigned as a literal in this line.
+    vite_secret_name = re.compile(
+        r"(?i)\bVITE_[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PRIVATE[_-]?KEY)[A-Z0-9_]*\b"
+    )
+    if vite_secret_name.search(line) and re.search(r"(?i)(?:import\.meta\.env|process\.env|VITE_)", line):
+        assignment = CLIENT_EXPOSED_CREDENTIAL_ASSIGNMENT.search(line)
+        if assignment is None:
+            return True
+    match = CLIENT_EXPOSED_CREDENTIAL_ASSIGNMENT.search(line)
+    if not match:
+        return False
+    value = re.split(r"\s+(?:#|//)", match.group("value"), maxsplit=1)[0].strip().rstrip(";,}")
+    if not value or PLACEHOLDER.search(value):
+        return False
+    if match.group("separator") == "=":
+        return True
+    suffix = Path(relative_file).suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        return True
+    return bool(re.match(r"^(?:['\"`]|[-+]?\d|true\b|false\b|null\b|\[|\{)", value, re.IGNORECASE))
 
 
 def _line_findings(relative_file: str, text: str) -> list[dict[str, object]]:
     findings: list[dict[str, object]] = []
     is_workflow = relative_file.startswith(".github/workflows/")
     is_cloudflare = Path(relative_file).name in {"wrangler.toml", "wrangler.json", "wrangler.jsonc"}
+    target_blank_lines = _target_blank_without_noopener_lines(text)
     for number, line in enumerate(text.splitlines(), start=1):
         if "routecraft-security: scanner-test-fixture" in line or "routecraft-security: scanner-pattern" in line:
             continue
         if SECRET_PREFIX.search(line) or (SECRET_ASSIGNMENT.search(line) and not PLACEHOLDER.search(line)):
-            findings.append(_finding("SECRET-STATIC-001", "high", "high", relative_file, number, "Move the credential to a local secret store or platform secret binding; do not commit it."))
-        if re.search(r"(?i)\b(?:print|console\.(?:log|info|debug)|logger\.(?:debug|info|warning|error))\s*\([^\n]*(?:token|secret|password|authorization|cookie)", line):
-            findings.append(_finding("LOG-CREDENTIAL-001", "medium", "medium", relative_file, number, "Log a redacted event code or aggregate, never credential-like values."))
-        if re.search(r"\b(?:eval\s*\(|exec\s*\(|new\s+Function\s*\()", line):
-            findings.append(_finding("CODE-EVAL-001", "high", "high", relative_file, number, "Replace dynamic code evaluation with structured parsing and an allowlisted dispatcher."))
+            findings.append(_finding("SECRET-STATIC-001", relative_file, number))
+        if re.search(
+            r"(?i)\b(?:print|console\.(?:log|info|debug)|logger\.(?:debug|info|warning|error))\s*\([^\n]*"
+            r"(?<![A-Za-z0-9_])(?:api[_-]?(?:key|token)|access[_-]?token|auth(?:orization|[_-]?token)?|refresh[_-]?token|"
+            r"client[_-]?secret|private[_-]?key|token|secret|password|cookie)(?![A-Za-z0-9_])",
+            line,
+        ):
+            findings.append(_finding("LOG-CREDENTIAL-001", relative_file, number))
+        if re.search(r"(?<![A-Za-z0-9_.])(?:eval|exec)\s*\(|\bnew\s+Function\s*\(", line):
+            findings.append(_finding("CODE-EVAL-001", relative_file, number))
         if re.search(r"(?i)\b(?:subprocess\.(?:run|call|Popen)|os\.system)\s*\([^\n]*shell\s*=\s*True", line):
-            findings.append(_finding("SHELL-UNSAFE-001", "high", "high", relative_file, number, "Use argument arrays with shell disabled and validate untrusted input."))
+            findings.append(_finding("SHELL-UNSAFE-001", relative_file, number))
         elif re.search(r"\bos\.system\s*\(", line):
-            findings.append(_finding("SHELL-UNSAFE-001", "medium", "medium", relative_file, number, "Use a fixed argument array via subprocess with shell disabled."))
+            findings.append(
+                _finding(
+                    "SHELL-UNSAFE-001",
+                    relative_file,
+                    number,
+                    severity="medium",
+                    confidence="medium",
+                    recommendation="Use a fixed argument array via subprocess with shell disabled.",
+                )
+            )
         dynamic_sql = bool(
             re.search(r"(?i)\bf[\"']\s*(?:select|insert|update|delete)\s+", line)
             or re.search(
@@ -147,31 +288,39 @@ def _line_findings(relative_file: str, text: str) -> list[dict[str, object]]:
             )
         )
         if dynamic_sql and "routecraft-security: allowlisted-sql-shape" not in line:
-            findings.append(_finding("SQL-INTERPOLATION-001", "high", "medium", relative_file, number, "Use parameterized queries; keep SQL structure constant and bind values separately."))
-        if re.search(r"(?i)access-control-allow-origin\s*[:=]\s*['\"]?\*", line):
-            findings.append(_finding("CORS-WILDCARD-001", "medium", "high", relative_file, number, "Use an explicit origin allowlist and do not combine credentialed CORS with a wildcard."))
+            findings.append(_finding("SQL-INTERPOLATION-001", relative_file, number))
+        if re.search(r"(?i)access-control-allow-origin", line) and re.search(r"(?i)(?:[:=,]\s*['\"]?\*|['\"]\s*\*\s*['\"])", line):
+            findings.append(_finding("CORS-WILDCARD-001", relative_file, number))
         if "Content-Security-Policy" in line and ("unsafe-eval" in line or "unsafe-inline" in line):  # routecraft-security: scanner-pattern
-            findings.append(_finding("CSP-WEAK-001", "medium", "high", relative_file, number, "Remove unsafe CSP sources where possible; use hashes or nonces for required scripts."))
+            findings.append(_finding("CSP-WEAK-001", relative_file, number))
         if re.search(r"(?i)(?:verify_ssl|verify)\s*=\s*False", line):
-            findings.append(_finding("TLS-VERIFY-DISABLED-001", "high", "high", relative_file, number, "Keep certificate verification enabled outside an explicitly isolated test fixture."))
+            findings.append(_finding("TLS-VERIFY-DISABLED-001", relative_file, number))
         if re.search(r"(?i)\b(?:allow_anonymous|skip_authorization|bypass_auth)\s*[:=]\s*true", line):
-            findings.append(_finding("AUTH-BYPASS-001", "high", "high", relative_file, number, "Require authentication and authorization checks on the protected operation."))
+            findings.append(_finding("AUTH-BYPASS-001", relative_file, number))
         if re.search(r"(?i)\bprivileged\s*:\s*true\b|security_opt\s*:\s*.*unconfined", line):
-            findings.append(_finding("INFRA-PRIVILEGED-001", "high", "high", relative_file, number, "Remove privileged or unconfined execution unless a reviewed isolation exception exists."))
+            findings.append(_finding("INFRA-PRIVILEGED-001", relative_file, number))
         if re.search(r"(?i)(?:cidr_blocks|source_ranges)\s*=?.*0\.0\.0\.0/0", line):
-            findings.append(_finding("INFRA-PUBLIC-INGRESS-001", "medium", "medium", relative_file, number, "Restrict ingress CIDRs to the smallest documented allowlist."))
+            findings.append(_finding("INFRA-PUBLIC-INGRESS-001", relative_file, number))
         if is_cloudflare and re.search(r"(?i)\b(?:api[_-]?(?:key|token)|(?:[A-Za-z0-9]+[_-])?(?:token|secret|password))\b\s*=", line):
-            findings.append(_finding("CF-SECRET-IN-VARS-001", "high", "high", relative_file, number, "Use a Cloudflare secret binding, not a value in vars/config."))
+            findings.append(_finding("CF-SECRET-IN-VARS-001", relative_file, number))
+        if number in target_blank_lines:
+            findings.append(_finding("TARGET-BLANK-NOOPENER-001", relative_file, number))
+        if _public_env_credential_assignment(relative_file, line):
+            findings.append(_finding("PUBLIC-ENV-SECRET-001", relative_file, number))
         if is_workflow:
-            if re.match(r"\s*pull_request_target\s*:", line):
-                findings.append(_finding("GHA-PR-TARGET-001", "high", "high", relative_file, number, "Avoid pull_request_target for untrusted pull-request code; use a least-privilege pull_request workflow."))
+            stripped = line.split("#", 1)[0].strip()
+            if re.match(r"(?i)pull_request_target\s*:", stripped) or (
+                re.match(r"(?i)(?:['\"]?on['\"]?)\s*:", stripped)
+                and re.search(r"(?i)\bpull_request_target\b", stripped)
+            ):
+                findings.append(_finding("GHA-PR-TARGET-001", relative_file, number))
             if re.search(r"\bpermissions\s*:\s*write-all", line):
-                findings.append(_finding("GHA-WRITE-ALL-001", "high", "high", relative_file, number, "Declare the minimal job or workflow permissions required."))
+                findings.append(_finding("GHA-WRITE-ALL-001", relative_file, number))
             match = re.search(r"\buses\s*:\s*[^@\s]+@([^\s#]+)", line)
             if match and not re.fullmatch(r"[0-9a-fA-F]{40}", match.group(1)):
-                findings.append(_finding("GHA-UNPINNED-ACTION-001", "medium", "high", relative_file, number, "Pin GitHub Actions uses references to a reviewed full commit SHA."))
+                findings.append(_finding("GHA-UNPINNED-ACTION-001", relative_file, number))
     if is_workflow and not re.search(r"(?m)^\s*permissions\s*:", text):
-        findings.append(_finding("GHA-PERMISSIONS-UNDECLARED-001", "low", "medium", relative_file, 1, "Declare least-privilege workflow permissions explicitly."))
+        findings.append(_finding("GHA-PERMISSIONS-UNDECLARED-001", relative_file, 1))
     return findings
 
 
@@ -179,7 +328,7 @@ def _manifest_findings(relative_file: str, text: str, available: set[str]) -> li
     findings: list[dict[str, object]] = []
     if relative_file == "package.json":
         if not {"package-lock.json", "yarn.lock", "pnpm-lock.yaml"} & available:
-            findings.append(_finding("DEP-LOCK-MISSING-001", "medium", "high", relative_file, 1, "Commit one supported dependency lockfile before installing or releasing."))
+            findings.append(_finding("DEP-LOCK-MISSING-001", relative_file, 1))
         try:
             scripts = json.loads(text).get("scripts", {})
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -187,10 +336,63 @@ def _manifest_findings(relative_file: str, text: str, available: set[str]) -> li
         if isinstance(scripts, dict):
             for command in scripts.values():
                 if isinstance(command, str) and re.search(r"(?i)\b(?:curl|wget|invoke-webrequest|iwr)\b", command):
-                    findings.append(_finding("DEP-RISKY-SCRIPT-001", "medium", "medium", relative_file, 1, "Review lifecycle/download scripts locally; pin inputs and avoid piping remote content to a shell."))
+                    findings.append(_finding("DEP-RISKY-SCRIPT-001", relative_file, 1))
     if relative_file == "requirements.txt" and not {"poetry.lock", "Pipfile.lock", "requirements.lock", "uv.lock"} & available:
-        findings.append(_finding("DEP-LOCK-MISSING-001", "medium", "medium", relative_file, 1, "Use a reviewed, pinned lockfile for production dependency resolution."))
+        findings.append(
+            _finding(
+                "DEP-LOCK-MISSING-001",
+                relative_file,
+                1,
+                confidence="medium",
+                recommendation="Use a reviewed, pinned lockfile for production dependency resolution.",
+            )
+        )
     return findings
+
+
+def _document_findings(documents: Mapping[str, str]) -> list[dict[str, object]]:
+    available = set(documents)
+    findings: list[dict[str, object]] = []
+    for relative_file in sorted(documents):
+        text = documents[relative_file]
+        findings.extend(_line_findings(relative_file, text))
+        findings.extend(_manifest_findings(relative_file, text, available))
+    unique = {(item["code"], item["relative_file"], item["line"]): item for item in findings}
+    return sorted(unique.values(), key=lambda item: (str(item["relative_file"]), int(item["line"]), str(item["code"])))
+
+
+def scan_fixture_documents(documents: Mapping[str, str], *, observed_at: str | None = None) -> dict[str, object]:
+    """Run registered rules against bounded in-memory validation documents.
+
+    This interface does not create or execute fixture files, follow links, invoke
+    Git, or use the network. It validates rule behavior only; a clean result is
+    not a security guarantee for the supplied text or any repository.
+    """
+    if not isinstance(documents, Mapping) or not documents or len(documents) > MAX_FILES:
+        raise ValueError("fixture documents must be a non-empty bounded mapping")
+    normalized: dict[str, str] = {}
+    total = 0
+    for raw_path, body in documents.items():
+        if not isinstance(raw_path, str) or not isinstance(body, str):
+            raise ValueError("fixture paths and document bodies must be strings")
+        if "\\" in raw_path or ":" in raw_path:
+            raise ValueError("fixture paths must be portable relative POSIX paths")
+        relative = PurePosixPath(raw_path)
+        if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+            raise ValueError("fixture paths must stay inside the in-memory fixture root")
+        normalized_path = relative.as_posix()
+        if normalized_path in normalized or not _text_candidate(Path(normalized_path)):
+            raise ValueError("fixture path is duplicate or outside the text scanner scope")
+        encoded_size = len(body.encode("utf-8"))
+        if encoded_size > MAX_FILE_BYTES:
+            raise ValueError("fixture document exceeds the per-file limit")
+        total += encoded_size
+        if total > MAX_TOTAL_BYTES:
+            raise ValueError("fixture documents exceed the total-size limit")
+        normalized[normalized_path] = body
+    timestamp = observed_at or _now()
+    findings = _document_findings(normalized)
+    return _report(_opaque("security-fixture-validation", length=16), timestamp, "policy", findings, set())
 
 
 def _fingerprint(finding: Mapping[str, object]) -> str:
@@ -223,18 +425,16 @@ def scan(source_root: str | Path, baseline: str | Path | Mapping[str, object] | 
         return _report(repository_hint, observed_at, baseline_kind, [], previous, error=True)
     try:
         files, limited = _select_files(root)
-        available = {_relative(root, item) for item in files}
-        findings: list[dict[str, object]] = []
+        documents: dict[str, str] = {}
         for path in files:
             relative_file = _relative(root, path)
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                documents[relative_file] = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            findings.extend(_line_findings(relative_file, text))
-            findings.extend(_manifest_findings(relative_file, text, available))
+        findings = _document_findings(documents)
         if limited:
-            findings.append(_finding("SCAN-BOUNDED-001", "info", "high", ".", 1, "Review excluded or size-capped files manually if they are security-relevant."))
+            findings.append(_finding("SCAN-BOUNDED-001", ".", 1))
         unique = {(item["code"], item["relative_file"], item["line"]): item for item in findings}
         return _report(repository_hint, observed_at, baseline_kind, sorted(unique.values(), key=lambda item: (str(item["relative_file"]), int(item["line"]), str(item["code"]))), previous)
     except (OSError, ValueError):

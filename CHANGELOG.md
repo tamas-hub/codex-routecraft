@@ -1,5 +1,22 @@
 # Changelog
 
+## RouteCraft Local Runtime 0.7.0 - 2026-08-24
+
+- Added Graph IR v1 with exact node/edge contracts, static validation, versioned lane/config/policy registries, and an observe-first migration path that preserves the 0.6 fast path.
+- Added a physically separate SQLite Graph State Store with hash-chain checkpoints, process-safe resume, idempotency receipts, revision history, and corruption fail-closed behavior.
+- Added deterministic ready/critical-path scheduling, evidence gates, bounded node loops, selective retry, frozen independent results, input-hash invalidation, and structured verified-constraint feedback.
+- Added privacy-safe schema-v4 graph run/node/event, policy-candidate, benchmark, and security-rule projections without removing v1-v3 contracts or requiring Control Center.
+- Added ten Real Agent fixtures with bounded pilot defaults and explicit cost ceilings, plus paired security-rule confusion-matrix validation.
+- Added Control Center 0.3 compatibility, additive D1 v4 migration contracts, special-event segmentation, Policy Lab, and expanded health/doctor surfaces.
+
+## RouteCraft 0.6 Hardening / Graph Foundation
+
+- Added a disposable-repository Real Agent Benchmark Suite with the required ten task classes and isolated A/B/C/D RouteCraft and Decision Memory modes.
+- Added paired vulnerable/safe validation for all registered Security Hardener rules, pair-level confusion metrics, read-only repository dogfood, and explicit unavailable/insufficient evidence semantics.
+- Added an observation-only Legacy component ledger that requires consecutive healthy replacement cycles and never archives or removes a component automatically.
+- Added a deterministic Execution Graph core above current routing with typed units, ownership-aware ready selection, selective retry, bounded convergence, verified constraint feedback, and observe-first mode gating.
+- Added additive collector schema v4 evidence families while retaining strict v1-v3 compatibility and aggregate-only privacy boundaries.
+
 ## RouteCraft Local Runtime 0.6.0 - 2026-08-24
 
 - Added a privacy-safe schema-v3 Unified Collector while preserving the existing v1/v2 run and memory-task contract.

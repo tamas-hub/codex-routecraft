@@ -1,4 +1,4 @@
-"""Local-only, privacy-filtered RouteCraft Control Center v3 collector.
+"""Local-only, privacy-filtered RouteCraft Control Center collector.
 
 This file imports only stdlib plus ``routecraft_telemetry.py``, so it works in
 the exact installed tray directory without the source plugin tree.
@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import queue
@@ -24,8 +25,14 @@ from typing import Callable, Mapping
 
 import routecraft_telemetry
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+V3_SCHEMA_VERSION = 3
 MAX_COLLECTION = 500
+# Graph detail is one coherent run bundle, not a generic historical family.
+# Keep this aligned with the Control Center v4 ingestion boundary.  The
+# Runtime degrades an oversized bundle to graph_runs only before this point.
+MAX_GRAPH_BUNDLE_ROWS = 75
+_GRAPH_BUNDLE_FAMILIES = ("graph_runs", "graph_node_metrics", "graph_events")
 _USAGE_LOCK = threading.Lock()
 _OPAQUE = re.compile(r"^[a-f0-9]{16,64}$")
 # Labels may be human-facing (for example ``RouteCraft + Memory``), but must
@@ -41,7 +48,28 @@ _WINNER = {"current", "candidate", "tie", "inconclusive"}
 _CONFIDENCE = {"low", "medium", "high"}
 _SECURITY_STATUS = {"clean", "findings", "error", "unavailable"}
 _BASELINE = {"initial", "previous", "policy"}
-_RAW_KEYS = {"prompt", "conversation", "transcript", "body", "content", "source", "path", "session_id", "raw_session_id", "secret", "password", "cookie", "header", "authorization", "credential", "private_key"}
+_REAL_BENCHMARK_MODES = {"off", "on_memory_off", "on_recall", "full_memory", "graph_observe", "graph_enforce"}
+_REAL_BENCHMARK_METRICS = {"task_success", "test_pass", "acceptance_pass", "review_findings", "rework_count", "retry_count", "wall_time_ms", "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens", "total_tokens", "child_runs", "fresh_review_used", "memory_recall_count", "memory_useful_count", "sol_runs", "terra_runs", "luna_runs", "other_lane_runs"}
+_EVIDENCE_STATUS = {"insufficient_evidence", "low_confidence", "measured", "unavailable", "failed"}
+_SECURITY_VALIDATION_STATUS = {"passed", "failed", "insufficient_evidence", "unavailable"}
+_GRAPH_MODE = {"off", "observe", "enforce"}
+_GRAPH_STATUS = {"DRAFT", "COMPILED", "RUNNING", "ACCEPTED", "FAILED", "BLOCKED", "CANCELLED", "CONVERGENCE_FAILED"}
+_GRAPH_GATE_STATUS = {"PASS", "FAIL", "INCONCLUSIVE", "NOT_RUN"}
+_GRAPH_NODE_GATE_STATUS = {"PASS", "FAIL", "INCONCLUSIVE", "NOT_RUN"}
+_EVENT_CLASSIFICATION = {"normal", "benchmark_run", "migration_event", "incident_response", "token_burn_event", "reset_expectation", "manual_stress_test", "release_validation"}
+_GRAPH_NODE_TYPE = {"AGENT", "TOOL", "DETERMINISTIC", "GATE", "MERGE", "HUMAN_APPROVAL", "MEMORY_RECALL", "BENCHMARK", "SECURITY", "CHECKPOINT", "QUALITY"}
+_GRAPH_NODE_STATUS = {"PENDING", "READY", "RUNNING", "ACCEPTED", "FROZEN", "FAILED", "INVALIDATED", "BLOCKED", "SKIPPED", "CANCELLED"}
+_GRAPH_EVENT_TYPE = {"node_transition", "dependency", "checkpoint", "gate", "retry", "send_back", "constraint", "replan", "resume", "cancel", "external_mutation", "approval"}
+_EVIDENCE_GATE_RESULT = {"PASS", "FAIL", "INCONCLUSIVE"}
+_POLICY_CANDIDATE_STATUS = {"DRAFT", "SHADOW", "CANDIDATE", "APPROVED", "REJECTED", "RETIRED"}
+_POLICY_CANDIDATE_CHANGE_KIND = {"routing_threshold", "lane_mapping", "parallelism", "graph_template", "memory_recall", "gate_policy", "retry_policy", "other"}
+_RISK_LEVEL = {"low", "medium", "high", "critical"}
+_CONVERGENCE_REASON = {"none", "max_attempts", "max_steps", "max_child_runs", "max_wall_time", "retry_budget", "invalid_graph"}
+_GRAPH_TASK_CLASS = set(routecraft_telemetry.VALID_TASK_CLASSES) | {"security", "benchmark", "migration", "review", "investigation", "performance"}
+_LEGACY_COMPONENT_KIND = {"ai_usage_updater", "codex_meter_startup", "observatory_legacy", "collector_legacy"}
+_LEGACY_STATUS = {"active", "disabled", "observing", "superseded", "archived", "unknown"}
+_REPLACEMENT_KIND = {"unified_usage_adapter", "control_center", "unified_collector", "none"}
+_RAW_KEYS = {"prompt", "conversation", "transcript", "body", "content", "source", "path", "file", "file_content", "absolute_path", "session_id", "raw_session_id", "secret", "password", "cookie", "header", "authorization", "credential", "private_key", "raw_worker_packet", "raw_node_output", "memory_text", "decision_text"}
 
 DEVICE_HEALTH_KEYS = {"health_id", "device_id", "observed_at", "os_family", "online", "routecraft_version", "plugin_health", "hook_health", "agents_healthy", "agents_total", "git_clean", "git_ahead", "git_behind", "git_conflicts", "memory_git_clean", "last_sync_at"}
 MEMORY_METRICS_KEYS = {"metric_id", "device_id", "observed_at", "local_projects", "local_memories", "context_injections", "handoffs", "decision_cases", "candidates", "rules", "eligible_candidates", "recall_count", "useful_count", "learn_count", "skipped_count", "usefulness_rate", "last_backup_at", "last_sync_at"}
@@ -49,7 +77,16 @@ USAGE_SNAPSHOT_KEYS = {"snapshot_id", "device_id", "observed_at", "window_kind",
 BENCHMARK_RUN_KEYS = {"benchmark_run_id", "device_id", "observed_at", "comparison_kind", "status", "measured", "current_label", "candidate_label", "current_success_rate", "candidate_success_rate", "current_quality", "candidate_quality", "current_tokens", "candidate_tokens", "current_duration_ms", "candidate_duration_ms", "current_test_pass_rate", "candidate_test_pass_rate", "current_rework", "candidate_rework", "winner", "confidence"}
 SECURITY_SCAN_KEYS = {"scan_id", "device_id", "observed_at", "repository_hint", "status", "baseline", "critical_count", "high_count", "medium_count", "low_count", "info_count", "new_count", "resolved_count", "confidence"}
 SYSTEM_STATUS_KEYS = {"status_id", "device_id", "observed_at", "core_health", "plugin_version", "hook_health", "agents_healthy", "agents_total", "collector_health", "collector_version", "memory_local_health", "decision_health", "control_health", "benchmark_health", "security_health"}
+BENCHMARK_METRIC_EVIDENCE_KEYS = {"evidence_id", "device_id", "observed_at", "suite_version", "mode", "metric", "case_count", "sample_size", "available_count", "mean_value", "median_value", "min_value", "max_value", "success_count", "success_rate", "confidence", "evidence_status"}
+SECURITY_VALIDATION_KEYS = {"validation_id", "device_id", "observed_at", "ruleset_version", "ruleset_digest", "rules_tested", "supported_rules", "fixture_pairs", "fixture_coverage", "true_positive", "true_negative", "false_positive", "false_negative", "detection_rate", "false_positive_rate", "status", "confidence", "repositories_scanned", "useful_findings", "false_positive_findings", "unsupported_findings", "uncertain_findings"}
+GRAPH_RUN_KEYS = {"graph_run_id", "device_id", "observed_at", "event_classification", "graph_schema_version", "mode", "status", "graph_revision_count", "node_count", "edge_count", "parallel_width", "critical_path_length", "attempt_count", "retry_count", "send_back_count", "accepted_count", "frozen_count", "failed_count", "invalidated_count", "constraint_count", "checkpoint_count", "gate_pass_count", "gate_fail_count", "gate_inconclusive_count", "duration_ms", "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens"}
+GRAPH_NODE_METRIC_KEYS = {"node_metric_id", "graph_run_id", "device_id", "observed_at", "node_ordinal", "dependency_count", "node_type", "lane", "status", "attempt_count", "gate_status", "duration_ms", "total_tokens", "retry_count", "send_back_count", "accepted", "frozen", "invalidated"}
+GRAPH_EVENT_KEYS = {"graph_event_id", "graph_run_id", "device_id", "observed_at", "event_sequence", "event_type", "status", "node_ordinal", "source_node_ordinal", "target_node_ordinal", "gate_status", "attempt_count", "affected_node_count", "constraint_count", "checkpoint_count"}
+POLICY_CANDIDATE_KEYS = {"policy_candidate_id", "device_id", "observed_at", "base_policy_version", "candidate_version", "candidate_change_kind", "sample_size", "confidence", "expected_benefit", "known_risk", "status"}
+SECURITY_RULE_METRIC_KEYS = {"security_rule_metric_id", "device_id", "observed_at", "ruleset_version", "rule_id", "true_positive", "true_negative", "false_positive", "false_negative", "fixture_coverage", "detection_rate", "false_positive_rate", "confidence", "status"}
+LEGACY_COMPONENT_KEYS = {"component_observation_id", "device_id", "observed_at", "component_kind", "status", "replacement_kind", "enabled", "running", "observation_cycles", "consecutive_healthy_cycles", "last_error_at", "missing_snapshots", "duplicate_ingestions", "replacement_health", "confidence"}
 FAMILY_KEYS = {"device_health": DEVICE_HEALTH_KEYS, "memory_metrics": MEMORY_METRICS_KEYS, "usage_snapshots": USAGE_SNAPSHOT_KEYS, "benchmark_runs": BENCHMARK_RUN_KEYS, "security_scans": SECURITY_SCAN_KEYS, "system_status": SYSTEM_STATUS_KEYS}
+V4_FAMILY_KEYS = {**FAMILY_KEYS, "benchmark_metric_evidence": BENCHMARK_METRIC_EVIDENCE_KEYS, "security_validations": SECURITY_VALIDATION_KEYS, "graph_runs": GRAPH_RUN_KEYS, "graph_node_metrics": GRAPH_NODE_METRIC_KEYS, "graph_events": GRAPH_EVENT_KEYS, "policy_candidates": POLICY_CANDIDATE_KEYS, "security_rule_metrics": SECURITY_RULE_METRIC_KEYS, "legacy_components": LEGACY_COMPONENT_KEYS}
 RUN_BASE_KEYS = {
     "run_id", "parent_run_id", "device_id", "route_family", "role", "human_model", "human_effort",
     "actual_model", "actual_effort", "started_at", "ended_at", "duration_ms", "input_tokens",
@@ -146,9 +183,9 @@ def _git_state(root: Path) -> tuple[bool, int, int, int]:
 def _plugin_version(source_root: Path) -> str:
     try:
         manifest = json.loads((source_root / "plugins" / "codex-routecraft" / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        return _label(manifest.get("version"), "0.6.0")
+        return _label(manifest.get("version"), "0.7.0")
     except (OSError, ValueError, json.JSONDecodeError):
-        return "0.6.0"
+        return "0.7.0"
 
 
 def _file_digest(path: Path) -> str | None:
@@ -240,7 +277,7 @@ def _run_app_server(command: list[str]) -> Mapping[str, object]:
                 return payload["result"]
 
     try:
-        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.6.0"}}})
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.7.0"}}})
         receive(1)
         send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         send({"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}})
@@ -686,6 +723,16 @@ def _valid_percent(value: object) -> bool:
     return _valid_count(value) and value <= 100
 
 
+def _valid_finite(value: object, *, nullable: bool = False) -> bool:
+    if nullable and value is None:
+        return True
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+
+
+def _valid_rate(value: object, *, nullable: bool = False) -> bool:
+    return _valid_finite(value, nullable=nullable) and (value is None or value <= 100)
+
+
 def _valid_label(value: object) -> bool:
     return isinstance(value, str) and bool(_LABEL.fullmatch(value))
 
@@ -782,9 +829,18 @@ def _valid_memory_task(row: Mapping[str, object]) -> bool:
 
 
 def _valid_family(name: str, row: Mapping[str, object]) -> bool:
-    if set(row) != FAMILY_KEYS[name] or any(key in _RAW_KEYS for key in row):
+    keys = V4_FAMILY_KEYS.get(name)
+    if keys is None or set(row) != keys or any(key in _RAW_KEYS for key in row):
         return False
-    identity_key = next(iter(FAMILY_KEYS[name] & {"health_id", "metric_id", "snapshot_id", "benchmark_run_id", "scan_id", "status_id"}))
+    identities = {
+        "device_health": "health_id", "memory_metrics": "metric_id", "usage_snapshots": "snapshot_id",
+        "benchmark_runs": "benchmark_run_id", "security_scans": "scan_id", "system_status": "status_id",
+        "benchmark_metric_evidence": "evidence_id", "security_validations": "validation_id",
+        "graph_runs": "graph_run_id", "graph_node_metrics": "node_metric_id", "graph_events": "graph_event_id",
+        "policy_candidates": "policy_candidate_id", "security_rule_metrics": "security_rule_metric_id",
+        "legacy_components": "component_observation_id",
+    }
+    identity_key = identities[name]
     if not _valid_id(row.get(identity_key)) or not _valid_id(row.get("device_id")) or not isinstance(row.get("observed_at"), str) or not _TIMESTAMP.fullmatch(row["observed_at"]):
         return False
     if name == "device_health":
@@ -802,12 +858,114 @@ def _valid_family(name: str, row: Mapping[str, object]) -> bool:
     if name == "security_scans":
         counts = ("critical_count", "high_count", "medium_count", "low_count", "info_count", "new_count", "resolved_count")
         return _valid_label(row["repository_hint"]) and row["status"] in _SECURITY_STATUS and row["baseline"] in _BASELINE and all(_valid_count(row[key]) for key in counts) and row["confidence"] in _CONFIDENCE
-    return row["core_health"] in _HEALTH and _valid_label(row["plugin_version"]) and row["hook_health"] in _HEALTH and _valid_count(row["agents_healthy"]) and _valid_count(row["agents_total"]) and row["agents_healthy"] <= row["agents_total"] and row["collector_health"] in _HEALTH and _valid_label(row["collector_version"]) and all(row[key] in _HEALTH for key in ("memory_local_health", "decision_health", "control_health", "benchmark_health", "security_health"))
+    if name == "system_status":
+        return row["core_health"] in _HEALTH and _valid_label(row["plugin_version"]) and row["hook_health"] in _HEALTH and _valid_count(row["agents_healthy"]) and _valid_count(row["agents_total"]) and row["agents_healthy"] <= row["agents_total"] and row["collector_health"] in _HEALTH and _valid_label(row["collector_version"]) and all(row[key] in _HEALTH for key in ("memory_local_health", "decision_health", "control_health", "benchmark_health", "security_health"))
+    if name == "benchmark_metric_evidence":
+        case_count, sample_size, available = row["case_count"], row["sample_size"], row["available_count"]
+        statistics = [row[key] for key in ("mean_value", "median_value", "min_value", "max_value")]
+        success_count, success_rate = row["success_count"], row["success_rate"]
+        if not all(_valid_count(item) for item in (case_count, sample_size, available)) or available > sample_size:
+            return False
+        has_success = success_count is not None or success_rate is not None
+        if available == 0:
+            if any(item is not None for item in statistics) or has_success:
+                return False
+        elif has_success:
+            if any(item is not None for item in statistics) or not _valid_count(success_count) or success_count > available or not _valid_rate(success_rate):
+                return False
+            if abs(success_rate - success_count * 100 / available) > 0.01:
+                return False
+        else:
+            if not all(_valid_finite(item) for item in statistics):
+                return False
+            mean, median, minimum, maximum = statistics
+            if minimum > median or median > maximum or mean < minimum or mean > maximum:
+                return False
+        return _valid_label(row["suite_version"]) and row["mode"] in _REAL_BENCHMARK_MODES and row["metric"] in _REAL_BENCHMARK_METRICS and row["confidence"] in _CONFIDENCE and row["evidence_status"] in _EVIDENCE_STATUS
+    if name == "security_validations":
+        counts = [row[key] for key in ("rules_tested", "supported_rules", "fixture_pairs", "true_positive", "true_negative", "false_positive", "false_negative")]
+        coverage = row["fixture_coverage"]
+        detection = row["detection_rate"]
+        false_positive_rate = row["false_positive_rate"]
+        core_metrics = [*counts, coverage, detection, false_positive_rate]
+        if row["status"] == "unavailable":
+            if any(item is not None for item in core_metrics):
+                return False
+            dogfood = [row[key] for key in ("repositories_scanned", "useful_findings", "false_positive_findings", "unsupported_findings", "uncertain_findings")]
+            return all(item is None for item in dogfood) and _valid_label(row["ruleset_version"]) and _valid_id(row["ruleset_digest"]) and row["confidence"] in _CONFIDENCE
+        if not all(_valid_count(item) for item in counts):
+            return False
+        tested, supported, pairs, true_positive, true_negative, false_positive, false_negative = counts
+        if tested > supported or true_positive + false_negative != pairs or true_negative + false_positive != pairs:
+            return False
+        if not _valid_rate(coverage) or abs(coverage - (tested * 100 / supported if supported else 0)) > 0.01:
+            return False
+        if pairs:
+            if not _valid_rate(detection) or not _valid_rate(false_positive_rate) or abs(detection - true_positive * 100 / pairs) > 0.01 or abs(false_positive_rate - false_positive * 100 / pairs) > 0.01:
+                return False
+        elif detection is not None or false_positive_rate is not None:
+            return False
+        dogfood = [row[key] for key in ("repositories_scanned", "useful_findings", "false_positive_findings", "unsupported_findings", "uncertain_findings")]
+        if any(item is None for item in dogfood) != all(item is None for item in dogfood) or any(item is not None and not _valid_count(item) for item in dogfood):
+            return False
+        return _valid_label(row["ruleset_version"]) and _valid_id(row["ruleset_digest"]) and row["status"] in _SECURITY_VALIDATION_STATUS and row["confidence"] in _CONFIDENCE
+    if name == "graph_runs":
+        counts = [row[key] for key in ("graph_schema_version", "graph_revision_count", "node_count", "edge_count", "parallel_width", "critical_path_length", "attempt_count", "retry_count", "send_back_count", "accepted_count", "frozen_count", "failed_count", "invalidated_count", "constraint_count", "checkpoint_count", "gate_pass_count", "gate_fail_count", "gate_inconclusive_count")]
+        if not all(_valid_count(item) for item in counts):
+            return False
+        _, _, nodes, _, width, critical_path, _, _, _, accepted, frozen, failed, invalidated, _, _, _, _, _ = counts
+        if any(item > nodes for item in (accepted, frozen, failed, invalidated)) or accepted + frozen + failed + invalidated > nodes or width > 16 or critical_path > nodes:
+            return False
+        if any(row[key] is not None and not _valid_count(row[key]) for key in ("duration_ms", "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens")):
+            return False
+        if row["status"] == "ACCEPTED" and (failed or invalidated or row["gate_pass_count"] < 1):
+            return False
+        return row["event_classification"] in _EVENT_CLASSIFICATION and row["mode"] in _GRAPH_MODE and row["status"] in _GRAPH_STATUS
+    if name == "graph_node_metrics":
+        counts = ("attempt_count", "retry_count")
+        return (_valid_id(row["graph_run_id"]) and _valid_count(row["node_ordinal"]) and _valid_count(row["dependency_count"]) and row["node_type"] in _GRAPH_NODE_TYPE and _valid_label(row["lane"])
+                and row["status"] in _GRAPH_NODE_STATUS and all(_valid_count(row[key]) for key in counts)
+                and (row["send_back_count"] is None or _valid_count(row["send_back_count"]))
+                and row["gate_status"] in _GRAPH_NODE_GATE_STATUS and (row["duration_ms"] is None or _valid_count(row["duration_ms"]))
+                and (row["total_tokens"] is None or _valid_count(row["total_tokens"]))
+                and all(isinstance(row[key], bool) for key in ("accepted", "frozen", "invalidated")))
+    if name == "graph_events":
+        return (_valid_id(row["graph_run_id"]) and row["event_type"] in _GRAPH_EVENT_TYPE
+                and _valid_count(row["event_sequence"]) and row["status"] in _GRAPH_STATUS | _GRAPH_NODE_STATUS
+                and all(row[key] is None or _valid_count(row[key]) for key in ("node_ordinal", "source_node_ordinal", "target_node_ordinal"))
+                and (row["gate_status"] is None or row["gate_status"] in _EVIDENCE_GATE_RESULT)
+                and (row["event_type"] != "gate" or row["gate_status"] in _EVIDENCE_GATE_RESULT)
+                and (row["event_type"] != "dependency" or (row["source_node_ordinal"] is not None and row["target_node_ordinal"] is not None))
+                and all(_valid_count(row[key]) for key in ("attempt_count", "affected_node_count", "constraint_count", "checkpoint_count")))
+    if name == "policy_candidates":
+        return (_valid_label(row["base_policy_version"]) and _valid_label(row["candidate_version"]) and row["candidate_change_kind"] in _POLICY_CANDIDATE_CHANGE_KIND
+                and _valid_count(row["sample_size"]) and row["confidence"] in _CONFIDENCE
+                and _valid_finite(row["expected_benefit"], nullable=True) and row["known_risk"] in _RISK_LEVEL
+                and row["status"] in _POLICY_CANDIDATE_STATUS)
+    if name == "security_rule_metrics":
+        counts = ("true_positive", "true_negative", "false_positive", "false_negative")
+        if not all(_valid_count(row[key]) for key in counts) or not _valid_rate(row["fixture_coverage"]):
+            return False
+        pairs = row["true_positive"] + row["false_negative"]
+        negatives = row["true_negative"] + row["false_positive"]
+        return (_valid_label(row["ruleset_version"]) and _valid_label(row["rule_id"])
+                and (row["detection_rate"] is None if pairs == 0 else _valid_rate(row["detection_rate"]))
+                and (row["false_positive_rate"] is None if negatives == 0 else _valid_rate(row["false_positive_rate"]))
+                and row["confidence"] in _CONFIDENCE and row["status"] in _SECURITY_VALIDATION_STATUS)
+    if name == "legacy_components":
+        nullable_counts = [row[key] for key in ("observation_cycles", "consecutive_healthy_cycles", "missing_snapshots", "duplicate_ingestions")]
+        if any(item is not None and not _valid_count(item) for item in nullable_counts):
+            return False
+        cycles, healthy, _, _ = nullable_counts
+        if cycles is not None and healthy is not None and healthy > cycles:
+            return False
+        return row["component_kind"] in _LEGACY_COMPONENT_KIND and row["status"] in _LEGACY_STATUS and row["replacement_kind"] in _REPLACEMENT_KIND and (row["enabled"] is None or isinstance(row["enabled"], bool)) and (row["running"] is None or isinstance(row["running"], bool)) and (row["last_error_at"] is None or _timestamp(row["last_error_at"]) is not None) and row["replacement_health"] in _HEALTH and row["confidence"] in _CONFIDENCE
+    return False
 
 
 def validate_v3(payload: Mapping[str, object]) -> bool:
     allowed = {"schema_version", "runs", "memory_tasks", *FAMILY_KEYS}
-    if set(payload) != allowed or payload.get("schema_version") != SCHEMA_VERSION or not isinstance(payload.get("runs"), list) or not isinstance(payload.get("memory_tasks"), list):
+    if set(payload) != allowed or payload.get("schema_version") != V3_SCHEMA_VERSION or not isinstance(payload.get("runs"), list) or not isinstance(payload.get("memory_tasks"), list):
         return False
     if any(not isinstance(row, Mapping) or not _valid_run(row) for row in payload["runs"]):
         return False
@@ -820,15 +978,37 @@ def validate_v3(payload: Mapping[str, object]) -> bool:
     return True
 
 
+def validate_v4(payload: Mapping[str, object]) -> bool:
+    allowed = {"schema_version", "runs", "memory_tasks", *V4_FAMILY_KEYS}
+    if set(payload) != allowed or payload.get("schema_version") != SCHEMA_VERSION or not isinstance(payload.get("runs"), list) or not isinstance(payload.get("memory_tasks"), list):
+        return False
+    if any(not isinstance(row, Mapping) or not _valid_run(row) for row in payload["runs"]):
+        return False
+    if any(not isinstance(row, Mapping) or not _valid_memory_task(row) for row in payload["memory_tasks"]):
+        return False
+    for name in V4_FAMILY_KEYS:
+        rows = payload.get(name)
+        if not isinstance(rows, list) or len(rows) > MAX_COLLECTION or any(not isinstance(row, Mapping) or not _valid_family(name, row) for row in rows):
+            return False
+    graph_rows = sum(len(payload[name]) for name in _GRAPH_BUNDLE_FAMILIES)
+    if graph_rows > MAX_GRAPH_BUNDLE_ROWS:
+        return False
+    return True
+
+
+def validate_payload(payload: Mapping[str, object]) -> bool:
+    return validate_v3(payload) if payload.get("schema_version") == V3_SCHEMA_VERSION else validate_v4(payload)
+
+
 def payload_batches(payload: Mapping[str, object], size: int = 400) -> list[dict[str, object]]:
-    """Partition v3 telemetry deterministically without duplicating summaries.
+    """Partition v3/v4 telemetry deterministically without duplicating summaries.
 
     IDs are already stable in the source payload, so retries or partial uploads
     remain idempotent at the server.  The six aggregate families describe a
     collection cycle and are included only in the first request.
     """
-    if not isinstance(size, int) or size < 1 or size > MAX_COLLECTION or not validate_v3(payload):
-        raise ValueError("invalid v3 payload batch")
+    if not isinstance(size, int) or size < 1 or size > MAX_COLLECTION or not validate_payload(payload):
+        raise ValueError("invalid collector payload batch")
     runs = payload["runs"]
     memory_tasks = payload["memory_tasks"]
     assert isinstance(runs, list) and isinstance(memory_tasks, list)
@@ -836,14 +1016,15 @@ def payload_batches(payload: Mapping[str, object], size: int = 400) -> list[dict
     batches: list[dict[str, object]] = []
     for index in range(count):
         batch: dict[str, object] = {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": payload["schema_version"],
             "runs": runs[index * size:(index + 1) * size],
             "memory_tasks": memory_tasks[index * size:(index + 1) * size],
         }
-        for name in FAMILY_KEYS:
+        families = FAMILY_KEYS if payload["schema_version"] == V3_SCHEMA_VERSION else V4_FAMILY_KEYS
+        for name in families:
             batch[name] = payload[name] if index == 0 else []
-        if not validate_v3(batch):
-            raise ValueError("invalid v3 payload batch")
+        if not validate_payload(batch):
+            raise ValueError("invalid collector payload batch")
         batches.append(batch)
     return batches
 
@@ -891,13 +1072,224 @@ def collect_v3(*, source_root: Path | None = None, data_dir: str | None = None, 
         ),
         lambda: system_status(unavailable_device_health(device_id, observed_at), [], False, benchmark_summary(device_id, observed_at), security_summary(device_id, observed_at), device_id, observed_at),
     )
-    payload: dict[str, object] = {"schema_version": SCHEMA_VERSION, "runs": runs, "memory_tasks": memory_tasks, "device_health": [device], "memory_metrics": [memory] if memory else [], "usage_snapshots": usage, "benchmark_runs": [benchmark], "security_scans": [security], "system_status": [status]}
+    payload: dict[str, object] = {"schema_version": V3_SCHEMA_VERSION, "runs": runs, "memory_tasks": memory_tasks, "device_health": [device], "memory_metrics": [memory] if memory else [], "usage_snapshots": usage, "benchmark_runs": [benchmark], "security_scans": [security], "system_status": [status]}
     if not validate_v3(payload):
         device = unavailable_device_health(device_id, observed_at)
         benchmark = benchmark_summary(device_id, observed_at)
         security = security_summary(device_id, observed_at)
-        payload = {"schema_version": SCHEMA_VERSION, "runs": [], "memory_tasks": [], "device_health": [device], "memory_metrics": [], "usage_snapshots": [], "benchmark_runs": [benchmark], "security_scans": [security], "system_status": [system_status(device, [], False, benchmark, security, device_id, observed_at)]}
+        payload = {"schema_version": V3_SCHEMA_VERSION, "runs": [], "memory_tasks": [], "device_health": [device], "memory_metrics": [], "usage_snapshots": [], "benchmark_runs": [benchmark], "security_scans": [security], "system_status": [system_status(device, [], False, benchmark, security, device_id, observed_at)]}
     return payload
+
+
+def _summary_rows(path: Path, family: str, device_id: str) -> list[dict[str, object]]:
+    """Read a direct list of exact aggregate rows; never adapt raw artifacts."""
+    identity_keys = {
+        "benchmark_metric_evidence": "evidence_id",
+        "security_validations": "validation_id",
+        "graph_runs": "graph_run_id",
+        "graph_node_metrics": "node_metric_id",
+        "graph_events": "graph_event_id",
+        "policy_candidates": "policy_candidate_id",
+        "security_rule_metrics": "security_rule_metric_id",
+        "legacy_components": "component_observation_id",
+    }
+    try:
+        if path.stat().st_size > 262_144:
+            return []
+        value = json.loads(path.read_text(encoding="utf-8"))
+        candidates = value if isinstance(value, list) else [value]
+        if len(candidates) > MAX_COLLECTION:
+            return []
+        rows: list[dict[str, object]] = []
+        identity_key = identity_keys[family]
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping) or not _valid_family(family, candidate):
+                return []
+            normalized = dict(candidate)
+            normalized[identity_key] = _family_id(
+                family,
+                device_id,
+                str(candidate["observed_at"]),
+                str(candidate[identity_key]),
+            )
+            normalized["device_id"] = device_id
+            if not _valid_family(family, normalized):
+                return []
+            rows.append(normalized)
+        return rows
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def _empty_graph_bundle() -> dict[str, list[dict[str, object]]]:
+    return {family: [] for family in _GRAPH_BUNDLE_FAMILIES}
+
+
+def _read_graph_bundle(path: Path) -> object | None:
+    """Read the canonical graph bundle only; never inspect graph state."""
+    try:
+        if path.stat().st_size > 262_144:
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _normalize_graph_bundle(value: object, device_id: str) -> dict[str, list[dict[str, object]]]:
+    """Validate and normalize a single all-or-nothing Graph v4 bundle.
+
+    The collector changes the opaque device id for this collection cycle.  It
+    must consequently rewrite graph-run foreign keys together, rather than
+    treating the three graph families as unrelated summary files.  Any invalid
+    or mixed bundle is omitted in full.  Over 75 valid rows becomes exact
+    graph-run summaries only; it is never split into partial node/event data.
+    """
+    if not isinstance(value, Mapping) or set(value) != set(_GRAPH_BUNDLE_FAMILIES):
+        return _empty_graph_bundle()
+    source: dict[str, list[Mapping[str, object]]] = {}
+    for family in _GRAPH_BUNDLE_FAMILIES:
+        rows = value.get(family)
+        if not isinstance(rows, list) or len(rows) > MAX_COLLECTION:
+            return _empty_graph_bundle()
+        if any(not isinstance(row, Mapping) or not _valid_family(family, row) for row in rows):
+            return _empty_graph_bundle()
+        source[family] = rows
+
+    run_ids = [str(row["graph_run_id"]) for row in source["graph_runs"]]
+    if len(run_ids) != len(set(run_ids)):
+        return _empty_graph_bundle()
+    replacement_runs = {
+        original: _family_id("graph_runs", device_id, str(row["observed_at"]), original)
+        for original, row in zip(run_ids, source["graph_runs"])
+    }
+    # A node or event without a run in this exact bundle could be stale data
+    # from another graph export, so fail closed instead of sending a dangling
+    # foreign key to D1.
+    if any(str(row["graph_run_id"]) not in replacement_runs for family in ("graph_node_metrics", "graph_events") for row in source[family]):
+        return _empty_graph_bundle()
+
+    normalized: dict[str, list[dict[str, object]]] = _empty_graph_bundle()
+    for row in source["graph_runs"]:
+        copied = dict(row)
+        original = str(copied["graph_run_id"])
+        copied["graph_run_id"] = replacement_runs[original]
+        copied["device_id"] = device_id
+        if not _valid_family("graph_runs", copied):
+            return _empty_graph_bundle()
+        normalized["graph_runs"].append(copied)
+    for family, identity_key in (("graph_node_metrics", "node_metric_id"), ("graph_events", "graph_event_id")):
+        for row in source[family]:
+            copied = dict(row)
+            original_identity = str(copied[identity_key])
+            copied["graph_run_id"] = replacement_runs[str(copied["graph_run_id"])]
+            copied[identity_key] = _family_id(family, device_id, str(copied["observed_at"]), original_identity)
+            copied["device_id"] = device_id
+            if not _valid_family(family, copied):
+                return _empty_graph_bundle()
+            normalized[family].append(copied)
+
+    # The collector's record cap applies to the entire graph, not each family.
+    # Preserve only its safe run-level aggregate if details no longer fit.
+    if sum(len(normalized[family]) for family in _GRAPH_BUNDLE_FAMILIES) > MAX_GRAPH_BUNDLE_ROWS:
+        if len(normalized["graph_runs"]) > MAX_GRAPH_BUNDLE_ROWS:
+            return _empty_graph_bundle()
+        return {"graph_runs": normalized["graph_runs"], "graph_node_metrics": [], "graph_events": []}
+    return normalized
+
+
+def _legacy_graph_bundle(
+    graph_result: Path,
+    graph_node_result: Path,
+    graph_event_result: Path,
+    device_id: str,
+) -> dict[str, list[dict[str, object]]]:
+    """Transition reader for pre-bundle cache files, with the same coherence gate."""
+    values = {
+        "graph_runs": _read_graph_bundle(graph_result),
+        "graph_node_metrics": _read_graph_bundle(graph_node_result),
+        "graph_events": _read_graph_bundle(graph_event_result),
+    }
+    bundle = {
+        family: value if isinstance(value, list) else [value] if isinstance(value, Mapping) else []
+        for family, value in values.items()
+    }
+    return _normalize_graph_bundle(bundle, device_id)
+
+
+def collect_v4(
+    *,
+    source_root: Path | None = None,
+    data_dir: str | None = None,
+    sessions_dir: Path | None = None,
+    codex_home: Path | None = None,
+    since_days: int | None = 30,
+    benchmark_result: Path | None = None,
+    benchmark_evidence_result: Path | None = None,
+    security_validation_result: Path | None = None,
+    graph_bundle_result: Path | None = None,
+    graph_result: Path | None = None,
+    graph_node_result: Path | None = None,
+    graph_event_result: Path | None = None,
+    policy_candidate_result: Path | None = None,
+    security_rule_result: Path | None = None,
+    legacy_result: Path | None = None,
+) -> dict[str, object]:
+    """Collect the additive v4 evidence families while retaining every v3 row."""
+    home = codex_home or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    v3 = collect_v3(
+        source_root=source_root,
+        data_dir=data_dir,
+        sessions_dir=sessions_dir,
+        codex_home=home,
+        since_days=since_days,
+        benchmark_result=benchmark_result,
+    )
+    device_rows = v3.get("device_health")
+    device_id = str(device_rows[0]["device_id"]) if isinstance(device_rows, list) and device_rows and isinstance(device_rows[0], Mapping) else _device_id(home)
+    paths = {
+        "benchmark_metric_evidence": benchmark_evidence_result or home / "routecraft" / "benchmark" / "real-d1-summary.json",
+        "security_validations": security_validation_result or home / "routecraft" / "security" / "validation-d1-summary.json",
+        "policy_candidates": policy_candidate_result or home / "routecraft" / "policy" / "candidates-d1-summary.json",
+        "security_rule_metrics": security_rule_result or home / "routecraft" / "security" / "rule-metrics-d1-summary.json",
+        "legacy_components": legacy_result or home / "routecraft" / "legacy" / "latest-d1-summary.json",
+    }
+    payload = {
+        **v3,
+        "schema_version": SCHEMA_VERSION,
+        **{family: _summary_rows(path, family, device_id) for family, path in paths.items()},
+    }
+    canonical_graph_bundle = graph_bundle_result or home / "routecraft" / "graph" / "latest-collector-v4.json"
+    if graph_bundle_result is not None or canonical_graph_bundle.is_file():
+        graph_families = _normalize_graph_bundle(_read_graph_bundle(canonical_graph_bundle), device_id)
+    else:
+        graph_families = _legacy_graph_bundle(
+            graph_result or home / "routecraft" / "graph" / "latest-d1-summary.json",
+            graph_node_result or home / "routecraft" / "graph" / "latest-node-metrics.json",
+            graph_event_result or home / "routecraft" / "graph" / "latest-events.json",
+            device_id,
+        )
+    payload.update(graph_families)
+    statuses = payload.get("system_status")
+    if isinstance(statuses, list):
+        for status in statuses:
+            if isinstance(status, dict):
+                status["collector_version"] = "4.0.0"
+    if validate_v4(payload):
+        return payload
+    fallback = {
+        **fixture_payload(),
+        "schema_version": SCHEMA_VERSION,
+        "benchmark_metric_evidence": [],
+        "security_validations": [],
+        "graph_runs": [],
+        "graph_node_metrics": [],
+        "graph_events": [],
+        "policy_candidates": [],
+        "security_rule_metrics": [],
+        "legacy_components": [],
+    }
+    fallback["system_status"][0]["collector_version"] = "4.0.0"
+    return fallback
 
 
 def fixture_payload() -> dict[str, object]:
@@ -906,7 +1298,24 @@ def fixture_payload() -> dict[str, object]:
     device = unavailable_device_health(device_id, observed_at)
     benchmark = benchmark_summary(device_id, observed_at)
     security = security_summary(device_id, observed_at)
-    return {"schema_version": SCHEMA_VERSION, "runs": [], "memory_tasks": [], "device_health": [device], "memory_metrics": [], "usage_snapshots": [], "benchmark_runs": [benchmark], "security_scans": [security], "system_status": [system_status(device, [], False, benchmark, security, device_id, observed_at)]}
+    return {"schema_version": V3_SCHEMA_VERSION, "runs": [], "memory_tasks": [], "device_health": [device], "memory_metrics": [], "usage_snapshots": [], "benchmark_runs": [benchmark], "security_scans": [security], "system_status": [system_status(device, [], False, benchmark, security, device_id, observed_at)]}
+
+
+def fixture_payload_v4() -> dict[str, object]:
+    payload = {
+        **fixture_payload(),
+        "schema_version": SCHEMA_VERSION,
+        "benchmark_metric_evidence": [],
+        "security_validations": [],
+        "graph_runs": [],
+        "graph_node_metrics": [],
+        "graph_events": [],
+        "policy_candidates": [],
+        "security_rule_metrics": [],
+        "legacy_components": [],
+    }
+    payload["system_status"][0]["collector_version"] = "4.0.0"
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -916,10 +1325,40 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sessions-dir", type=Path)
     parser.add_argument("--since-days", type=int, default=30)
     parser.add_argument("--benchmark-result", type=Path)
+    parser.add_argument("--benchmark-evidence-result", type=Path)
+    parser.add_argument("--security-validation-result", type=Path)
+    parser.add_argument("--graph-bundle-result", type=Path, help="Canonical atomic Graph v4 bundle (preferred)")
+    parser.add_argument("--graph-result", type=Path)
+    parser.add_argument("--graph-node-result", type=Path)
+    parser.add_argument("--graph-event-result", type=Path)
+    parser.add_argument("--policy-candidate-result", type=Path)
+    parser.add_argument("--security-rule-result", type=Path)
+    parser.add_argument("--legacy-result", type=Path)
     parser.add_argument("--fixture", action="store_true")
+    parser.add_argument("--schema-v3", action="store_true", help="Emit the legacy v3 collector contract")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
-    payload = fixture_payload() if args.fixture else collect_v3(source_root=args.source_root, data_dir=args.data_dir, sessions_dir=args.sessions_dir, since_days=args.since_days, benchmark_result=args.benchmark_result)
+    if args.fixture:
+        payload = fixture_payload() if args.schema_v3 else fixture_payload_v4()
+    elif args.schema_v3:
+        payload = collect_v3(source_root=args.source_root, data_dir=args.data_dir, sessions_dir=args.sessions_dir, since_days=args.since_days, benchmark_result=args.benchmark_result)
+    else:
+        payload = collect_v4(
+            source_root=args.source_root,
+            data_dir=args.data_dir,
+            sessions_dir=args.sessions_dir,
+            since_days=args.since_days,
+            benchmark_result=args.benchmark_result,
+            benchmark_evidence_result=args.benchmark_evidence_result,
+            security_validation_result=args.security_validation_result,
+            graph_bundle_result=args.graph_bundle_result,
+            graph_result=args.graph_result,
+            graph_node_result=args.graph_node_result,
+            graph_event_result=args.graph_event_result,
+            policy_candidate_result=args.policy_candidate_result,
+            security_rule_result=args.security_rule_result,
+            legacy_result=args.legacy_result,
+        )
     text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     if args.output:
         args.output.write_text(text + "\n", encoding="utf-8")
