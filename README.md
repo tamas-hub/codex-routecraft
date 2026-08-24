@@ -1,5 +1,22 @@
 # RouteCraft for Codex
 
+## RouteCraft Memory Local v1.0
+
+This repository also contains RouteCraft Memory Local, a separate standard-library-only local product for carrying structured project decisions, failures, constraints, important files, and next actions across AI coding sessions. It uses a local SQLite database, Japanese-capable search, bounded Context Packs, six-file Handoff Packs, read-only Git metadata, confirmed backup/restore, and a Japanese-first Web UI bound only to `127.0.0.1`.
+
+It does not replace or migrate the existing Markdown Decision Store automatically. Existing Case/Candidate/Rule data remains compatible and can be imported explicitly.
+
+```sh
+python plugins/codex-routecraft/scripts/routecraft.py init
+python plugins/codex-routecraft/scripts/routecraft.py project add --name "My project" --repo /path/to/repo
+python plugins/codex-routecraft/scripts/routecraft.py loop configure --enable
+python plugins/codex-routecraft/scripts/routecraft.py ui
+```
+
+The opt-in Loop bridge injects a bounded Context Pack only for an explicitly registered repository and saves an unverified Git-metadata summary after a successful Stop. It never reads transcripts or auto-creates projects. The Decision Store remains the reusable Case/Rule layer; Memory Local is the project working-memory layer.
+
+Python 3.11+ is required. Git is optional and used only for read-only repository status. Memory Local does not require an account, paid API, Docker, external assets, or telemetry. See the [v1 product specification](docs/product-spec-v1.md), [security and privacy guide](docs/security-and-privacy.md), and [release plan](docs/release-plan-v1.md).
+
 **Sol-led adaptive routing plus persistent decision memory for Codex. Default to solo, delegate only when it pays, parallelize only independent work, verify in the parent, and let future sessions reuse validated decisions.**
 
 RouteCraft is a Codex plugin/skill for software-delivery orchestration across the GPT-5.6 family. The primary Sol session owns architecture and acceptance. Bounded implementation can move to Luna, judgment-heavy implementation can move to Terra, and high-risk changes can receive a fresh Sol review.

@@ -13,12 +13,22 @@ def add_store_argument(parser: argparse.ArgumentParser, *, required: bool = Fals
     )
 
 
+def installed_plugin_version() -> str:
+    """Report the actual installed plugin version without changing store formats."""
+    manifest = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
+    try:
+        value = json.loads(manifest.read_text(encoding="utf-8")).get("version")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        value = None
+    return str(value or "0.5.1")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="routecraft-memory",
         description="Persistent decision memory for RouteCraft",
     )
-    parser.add_argument("--version", action="version", version="routecraft-memory 0.5.0")
+    parser.add_argument("--version", action="version", version=f"routecraft-memory {installed_plugin_version()}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="Create or clone a dedicated memory store")

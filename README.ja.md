@@ -2,6 +2,44 @@
 
 RouteCraftは、**Solを設計・統合・最終判断に残し、実装だけを必要に応じてLuna/Terraへ振り分け、過去に獲得した判断を次のCodexへ相続する**オーケストレーション・プラグインです。
 
+## RouteCraft Memory Local v1.0
+
+このrepositoryには、既存のMarkdown Decision Storeとは独立したローカル製品「RouteCraft Memory Local」も含まれます。
+
+> 昨日のAI開発の続きを、今日のAIに正確に引き継ぐ。
+
+プロジェクトごとの判断、失敗、制約、重要file、次の作業をSQLiteへ構造化して保存し、外部APIなしで検索、Context Pack、Handoff Packを生成します。既存の`routecraft_memory.py`、Case/Candidate/Rule、Private Git同期は変更せず、明示importで移行できます。
+
+必要なものはPython 3.11以上だけです。Git状態を使う場合だけGit CLIを使用します。
+
+```powershell
+$env:PYTHONUTF8 = '1'
+python plugins/codex-routecraft/scripts/routecraft.py init
+python plugins/codex-routecraft/scripts/routecraft.py project add --name "サンプル開発" --repo "C:\path\to\repo"
+python plugins/codex-routecraft/scripts/routecraft.py project list
+python plugins/codex-routecraft/scripts/routecraft.py loop configure --enable
+python plugins/codex-routecraft/scripts/routecraft.py ui
+```
+
+macOS/Linuxでは`python`を`python3`へ読み替えます。既定dataは`~/.routecraft-memory-local/`です。Web UIは`127.0.0.1`だけで起動し、Memory Local本体はtelemetry、AI API、外部assetを使用しません。
+
+主な操作:
+
+```text
+routecraft project add|list|show|edit|archive|delete|backup|restore
+routecraft memory add|list|edit|search|import|export
+routecraft context build
+routecraft handoff build
+routecraft git status
+routecraft session summarize
+routecraft loop status|configure
+routecraft backup|restore|doctor|ui
+```
+
+Loop連携は明示的に有効化した場合だけ、登録済みprojectのCompact ContextをSessionStartへ注入し、正常なStop時にread-only Git metadataから未確認のsession summaryを保存します。raw transcriptは読まず、projectを自動作成しません。Decision Storeは汎用Case/Rule、Memory Localはproject作業記憶として分離します。反映には新しいCodexタスクが必要です。
+
+デモ、配布ZIP、復元、既知制約は[製品仕様](docs/product-spec-v1.md)、[セキュリティ](docs/security-and-privacy.md)、[リリース計画](docs/release-plan-v1.md)を参照してください。
+
 狙いは「サブエージェントを大量に使うこと」でも「巨大プロンプトを毎回読むこと」でもありません。
 
 **小さい仕事はSol単独。委譲するなら最安で完遂できるlane。並列化は独立作業だけ。最後は親Solがdiffとテストを確認。高リスク時だけFresh Solレビュー。仕事後は検証済み知見だけを外部知能へ残す。**

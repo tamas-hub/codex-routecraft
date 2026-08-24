@@ -1,5 +1,38 @@
 # Installation
 
+## RouteCraft Memory Local v1.0
+
+Memory Local can be used from the repository without installing the Codex plugin. It requires Python 3.11 or later; Git is optional and only needed for repository status.
+
+Windows PowerShell:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+python .\plugins\codex-routecraft\scripts\routecraft.py --version
+python .\plugins\codex-routecraft\scripts\routecraft.py init
+python .\plugins\codex-routecraft\scripts\routecraft.py ui
+```
+
+macOS:
+
+```sh
+python3 ./plugins/codex-routecraft/scripts/routecraft.py --version
+python3 ./plugins/codex-routecraft/scripts/routecraft.py init
+python3 ./plugins/codex-routecraft/scripts/routecraft.py ui
+```
+
+The release ZIP contains platform launchers and the same Python source. It does not install a service, background watcher, login item, runtime, or account. See `release/README-JA.md` and `release/UNINSTALL-JA.md`.
+
+When the Codex RouteCraft plugin is also installed, enable the opt-in project-memory bridge after registering the repository:
+
+```powershell
+python .\plugins\codex-routecraft\scripts\routecraft.py project add --name "My project" --repo "C:\path\to\repo"
+python .\plugins\codex-routecraft\scripts\routecraft.py loop configure --enable --context-profile compact
+python .\plugins\codex-routecraft\scripts\routecraft.py loop status
+```
+
+The bridge remains OFF until configured, never auto-registers a repository, and needs a new Codex task after plugin reinstall. Disable it without deleting local data with `routecraft loop configure --disable`.
+
 ## Requirements
 
 - Git

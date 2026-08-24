@@ -20,6 +20,14 @@ Other agents or the user may be editing concurrently. Preserve unrelated and con
 INTERFACES
 - <signatures, types, schemas, commands, behavior, compatibility requirements>
 
+MCP CAPABILITIES
+profile: none | source-read | docs-read | ui-observe | scoped-files | external-mutation
+allowed:
+- <server>: <exact tool names, or none>
+purpose: <evidence each allowed tool may collect>
+denied: <writes, sends, deploys, permission changes, destructive actions, or other exclusions>
+approval boundary: <existing user authorization; say none when no mutation is authorized>
+
 CONSTRAINTS
 - <repository conventions, security boundaries, excluded scope, settled decisions>
 
@@ -40,6 +48,8 @@ VERIFIED: <commands and concrete results>
 JUDGMENT CALLS: <decisions made or none>
 GAPS: <remaining gaps or none>
 ```
+
+The `MCP CAPABILITIES` block is mandatory even when its value is `profile: none`. A child must not discover or use additional MCP tools on its own. If the packet is insufficient, return the missing capability and evidence need to the parent instead of widening scope.
 
 ## Lane behavior
 
@@ -78,12 +88,19 @@ ACCUMULATED CHANGE SET
 INTERFACES AND CONSTRAINTS
 - <compatibility and safety rules>
 
+MCP CAPABILITIES
+profile: none | source-read | docs-read | ui-observe | scoped-files | external-mutation
+allowed:
+- <server>: <exact tool names, or none>
+expected evidence: <what MCP-derived evidence should exist, or none>
+mutation authorization: <explicit user-approved mutation, or none>
+
 VERIFICATION EVIDENCE
 - <command> -> <actual result>
 - <artifact/runtime check> -> <actual result>
 
 REVIEW
-Inspect correctness, completeness, regressions, scope discipline, interface preservation, test adequacy, and material risk.
+Inspect correctness, completeness, regressions, scope discipline, interface preservation, test adequacy, material risk, and whether actual MCP use stayed within the stated capabilities and mutation authorization.
 
 ROUTECRAFT REVIEW
 VERDICT: ship | fix-first | rethink

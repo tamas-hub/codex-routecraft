@@ -14,8 +14,12 @@ MEMORY_SCRIPT = PLUGIN / "scripts" / "routecraft_memory.py"
 MEMORY_PACKAGE = PLUGIN / "scripts" / "routecraft_memory_lib"
 EVALUATION_SCRIPT = PLUGIN / "scripts" / "routecraft_evaluation.py"
 OBSERVATORY_SCRIPT = PLUGIN / "scripts" / "routecraft_observatory.py"
+LOCAL_SCRIPT = PLUGIN / "scripts" / "routecraft.py"
+LOCAL_PACKAGE = PLUGIN / "scripts" / "routecraft_local"
+LOCAL_VERSION_FILE = ROOT / "release" / "VERSION"
+LOCAL_VERSION = "1.0.0"
 
-EXPECTED_VERSION = "0.5.1+codex.20260823011912"
+EXPECTED_VERSION = "0.5.1+codex.20260823165811"
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
@@ -72,6 +76,31 @@ required_files = [
     MEMORY_SCRIPT,
     EVALUATION_SCRIPT,
     OBSERVATORY_SCRIPT,
+    LOCAL_SCRIPT,
+    LOCAL_PACKAGE / "__init__.py",
+    LOCAL_PACKAGE / "errors.py",
+    LOCAL_PACKAGE / "core.py",
+    LOCAL_PACKAGE / "security.py",
+    LOCAL_PACKAGE / "service.py",
+    LOCAL_PACKAGE / "git_tools.py",
+    LOCAL_PACKAGE / "packs.py",
+    LOCAL_PACKAGE / "cli.py",
+    LOCAL_PACKAGE / "ui.py",
+    LOCAL_PACKAGE / "web" / "index.html",
+    LOCAL_PACKAGE / "web" / "app.js",
+    LOCAL_PACKAGE / "web" / "styles.css",
+    LOCAL_PACKAGE / "web" / "responsive.css",
+    PLUGIN / "scripts" / "routecraft.sh",
+    PLUGIN / "scripts" / "routecraft.ps1",
+    ROOT / "scripts" / "build_local_release.py",
+    ROOT / "scripts" / "evaluate_routecraft_local.py",
+    ROOT / "samples" / "demo-memories.jsonl",
+    ROOT / "samples" / "session-end-template.md",
+    ROOT / "samples" / "evaluation-suite.json",
+    LOCAL_VERSION_FILE,
+    ROOT / "release" / "README-JA.md",
+    ROOT / "release" / "UNINSTALL-JA.md",
+    ROOT / "release" / "THIRD_PARTY_NOTICES.md",
     PLUGIN / "scripts" / "routecraft_observatory_tray.ps1",
     PLUGIN / "scripts" / "install-observatory-tray.ps1",
     PLUGIN / "scripts" / "uninstall-observatory-tray.ps1",
@@ -88,6 +117,13 @@ required_files = [
     ROOT / "docs" / "PERSISTENT_DECISION_LAYER.ja.md",
     ROOT / "docs" / "MEMORY_EVALUATION.md",
     ROOT / "docs" / "MEMORY_EVALUATION.ja.md",
+    ROOT / "docs" / "product-spec-v1.md",
+    ROOT / "docs" / "architecture-v1.md",
+    ROOT / "docs" / "data-model-v1.md",
+    ROOT / "docs" / "security-and-privacy.md",
+    ROOT / "docs" / "release-plan-v1.md",
+    ROOT / "docs" / "test-plan-v1.md",
+    ROOT / "docs" / "implementation-plan-v1.md",
     ROOT / "tests" / "test_routecraft_memory.py",
     ROOT / "tests" / "test_routecraft_evaluation.py",
     ROOT / "tests" / "test_routecraft_git_privacy.py",
@@ -95,6 +131,11 @@ required_files = [
     ROOT / "tests" / "test_observatory_tray.py",
     ROOT / "tests" / "test_routecraft_source_guard.py",
     ROOT / "tests" / "test_routecraft_stdin_utf8.py",
+    ROOT / "tests" / "test_routecraft_local_data.py",
+    ROOT / "tests" / "test_routecraft_local_packs.py",
+    ROOT / "tests" / "test_routecraft_local_ui.py",
+    ROOT / "tests" / "test_routecraft_local_cli.py",
+    ROOT / "tests" / "test_routecraft_local_release.py",
     ROOT / "README.md",
     ROOT / "README.ja.md",
     ROOT / "LICENSE",
@@ -116,6 +157,26 @@ for example in [
         load_json(example)
     else:
         fail(f"Missing example packet: {example.relative_to(ROOT)}")
+
+for example in [ROOT / "samples" / "evaluation-suite.json"]:
+    if example.is_file():
+        load_json(example)
+for example in [ROOT / "samples" / "demo-memories.jsonl"]:
+    if not example.is_file():
+        continue
+    for line_number, line in enumerate(example.read_text(encoding="utf-8-sig").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            fail(f"JSONL parse failed: {example.relative_to(ROOT)}:{line_number}: {exc}")
+            continue
+        if payload.get("type") not in {
+            "decision", "failure", "lesson", "next_action", "constraint", "architecture",
+            "file_reference", "dependency", "deployment", "security", "note", "session_summary",
+        }:
+            fail(f"Invalid demo memory type at {example.relative_to(ROOT)}:{line_number}")
 
 if manifest.get("name") != "codex-routecraft":
     fail("plugin.json name must be codex-routecraft")
@@ -215,6 +276,8 @@ for template_name, kind in [("case.md", "case"), ("candidate.md", "candidate"), 
 memory_python_files = [MEMORY_SCRIPT, *sorted(MEMORY_PACKAGE.glob("*.py"))]
 source_guard_script = PLUGIN / "scripts" / "routecraft_source_guard.py"
 python_files = [*memory_python_files, source_guard_script, EVALUATION_SCRIPT, OBSERVATORY_SCRIPT]
+python_files.extend(sorted(LOCAL_PACKAGE.glob("*.py")))
+python_files.extend([LOCAL_SCRIPT, ROOT / "scripts" / "build_local_release.py", ROOT / "scripts" / "evaluate_routecraft_local.py"])
 for path in python_files:
     if not path.is_file():
         continue
@@ -260,6 +323,41 @@ if OBSERVATORY_SCRIPT.is_file():
         if term not in observatory_text:
             fail(f"Observatory missing evaluation telemetry contract text: {term}")
 
+if LOCAL_VERSION_FILE.is_file() and LOCAL_VERSION_FILE.read_text(encoding="utf-8").strip() != LOCAL_VERSION:
+    fail(f"RouteCraft Memory Local VERSION must be {LOCAL_VERSION}")
+local_init = LOCAL_PACKAGE / "__init__.py"
+if local_init.is_file() and f'VERSION = "{LOCAL_VERSION}"' not in local_init.read_text(encoding="utf-8"):
+    fail("routecraft_local.VERSION does not match release/VERSION")
+if LOCAL_SCRIPT.is_file() and "routecraft_local.cli import main" not in LOCAL_SCRIPT.read_text(encoding="utf-8"):
+    fail("routecraft.py must launch routecraft_local.cli")
+local_implementation = "\n".join(
+    path.read_text(encoding="utf-8") for path in sorted(LOCAL_PACKAGE.glob("*.py")) if path.is_file()
+)
+for term in [
+    "class RouteCraftService",
+    "def search_memories",
+    "def build_context_pack",
+    "def build_handoff_pack",
+    "def session_start",
+    "def session_stop",
+    "def add_loop_session_summary",
+    "loop_session_summaries",
+    "connect(immediate=True)",
+    "round_robin_experiment",
+    "Memory Local data directory must not reuse a RouteCraft Decision Store",
+    "def inspect_git",
+    "def create_server",
+    "127.0.0.1",
+    "telemetry_enabled",
+    "utf-8-sig",
+]:
+    if term not in local_implementation:
+        fail(f"RouteCraft Memory Local missing implementation term: {term}")
+ui_text = (LOCAL_PACKAGE / "ui.py").read_text(encoding="utf-8") if (LOCAL_PACKAGE / "ui.py").is_file() else ""
+for term in ["X-RouteCraft-CSRF", "Content-Security-Policy", "application/json", "MAX_BODY"]:
+    if term not in ui_text:
+        fail(f"RouteCraft Memory Local UI missing security term: {term}")
+
 hooks_path = PLUGIN / "hooks" / "hooks.json"
 hooks = load_json(hooks_path) if hooks_path.is_file() else {}
 hook_events = hooks.get("hooks", {}) if isinstance(hooks, dict) else {}
@@ -272,6 +370,16 @@ for term in ["routecraft_source_guard.py", "CLAUDE_PLUGIN_ROOT", "commandWindows
         fail(f"hooks.json missing Source Guard contract text: {term}")
 if source_guard_script.is_file():
     guard_text = source_guard_script.read_text(encoding="utf-8")
+    for term in [
+        "local_memory_start",
+        "local_memory_stop",
+        "MAX_SESSION_CONTEXT_CHARS",
+        "importlib.import_module",
+        "configure_text_streams",
+        "utf-8-sig",
+    ]:
+        if term not in guard_text:
+            fail(f"Source Guard missing Local bridge contract text: {term}")
     for term in [
         "GITHUB SOURCE-OF-TRUTH POLICY",
         "default_visibility",

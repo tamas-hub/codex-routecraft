@@ -1,5 +1,5 @@
 {
-  "description": "RouteCraft lifecycle guard for GitHub source-of-truth and explicit Memory Loop closure.",
+  "description": "RouteCraft lifecycle guard for GitHub source-of-truth, explicit Decision Memory closure, and opt-in Local project memory.",
   "hooks": {
     "SessionStart": [
       {
@@ -9,7 +9,7 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
             "commandWindows": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
-            "statusMessage": "Checking RouteCraft source and Memory policies",
+            "statusMessage": "Checking RouteCraft source and project Memory policies",
             "timeout": 10,
             "additionalContextLimit": 6000
           }
@@ -23,7 +23,7 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
             "commandWindows": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/routecraft_source_guard.py\"",
-            "statusMessage": "Confirming source sync and Memory Loop closure",
+            "statusMessage": "Confirming source sync and Memory closure",
             "timeout": 10
           }
         ]

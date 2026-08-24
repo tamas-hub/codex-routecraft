@@ -1,5 +1,19 @@
 # Changelog
 
+## RouteCraft Memory Local 1.0.0 - 2026-08-23
+
+- Added a separate local-only SQLite project memory product without replacing the existing Markdown Decision Store or its CLI.
+- Added project and twelve-type memory CRUD, Japanese search/ranking, legacy imports, safe exports, conflict detection, backups, and confirmed restore.
+- Added bounded Context Packs, six-file Handoff Packs, read-only Git summaries, and a Japanese-first Web UI bound only to `127.0.0.1`.
+- Added an opt-in RouteCraft Loop bridge for registered-project Context injection and idempotent Git-metadata session summaries without transcript access.
+- Isolated the optional bridge behind lazy loading, bounded combined Hook Context to 6,000 characters, and forced UTF-8 Hook streams on Windows without changing the disabled Loop path.
+- Made SQLite FTS5 the primary search candidate source with Unicode substring fallback, and made JSON/JSONL batch imports one transaction.
+- Made project-package imports one transaction, including project, memories, FTS rows, and conflict records, so late failures leave no partial import.
+- Added a durable `(project_id, source_ref)` Loop-summary key with an immediate SQLite transaction so concurrent Stop hooks converge on one summary without rewriting legacy records.
+- Connected project-package export/import to the localhost UI and emitted POSIX ZIP metadata so the macOS launcher retains mode `0755`.
+- Refused to reuse a Markdown Decision Store directory as the Memory Local SQLite data directory.
+- Added Windows/macOS ZIP builders, checksums, demo data, an offline retrieval evaluator, and v1 product/security/release documentation and tests.
+
 ## 0.5.1+codex.20260823011912
 
 - Make every measured Memory task close explicitly with a learned record or a finite skip reason.

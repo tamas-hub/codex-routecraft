@@ -9,6 +9,7 @@ still open. It never learns records or reads a transcript.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import re
@@ -16,6 +17,58 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+MAX_SESSION_CONTEXT_CHARS = 6000
+
+
+def configure_text_streams() -> None:
+    """Use the Codex hook's UTF-8 wire format regardless of Windows code page."""
+    stdin_reconfigure = getattr(sys.stdin, "reconfigure", None)
+    if callable(stdin_reconfigure):
+        try:
+            stdin_reconfigure(encoding="utf-8-sig", errors="strict")
+        except (OSError, ValueError):
+            pass
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (OSError, ValueError):
+                pass
+
+
+def _local_memory_call(method: str, event: Mapping[str, Any]) -> dict[str, Any]:
+    """Call the optional Local bridge without making the existing hook depend on it."""
+    try:
+        module = importlib.import_module("routecraft_local.loop_bridge")
+    except (ImportError, ModuleNotFoundError):
+        return {}
+    except Exception as exc:
+        return {"systemMessage": f"RouteCraft Memory Local bridge was unavailable: {exc}"}
+    try:
+        result = getattr(module, method)(event)
+        return dict(result) if isinstance(result, Mapping) else {}
+    except Exception as exc:
+        return {"systemMessage": f"RouteCraft Memory Local bridge failed safely: {exc}"}
+
+
+def local_memory_start(event: Mapping[str, Any]) -> dict[str, Any]:
+    return _local_memory_call("session_start", event)
+
+
+def local_memory_stop(event: Mapping[str, Any]) -> dict[str, Any]:
+    # A blocked Stop is retried with stop_hook_active=true. Source/evaluation
+    # guards must not block again, but the Local bridge still has to finalize
+    # its sidecar exactly once after those guards have yielded. The bridge's
+    # state file and idempotent source_ref remain the duplicate-write guards.
+    local_event = dict(event)
+    local_event["stop_hook_active"] = False
+    return _local_memory_call("session_stop", local_event)
 
 
 def codex_home() -> Path:
@@ -255,7 +308,11 @@ def merge_results(event_name: object, *results: Mapping[str, Any]) -> dict[str, 
             messages.append(message)
     merged: dict[str, Any] = {}
     if contexts and event_name == "SessionStart":
-        merged["hookSpecificOutput"] = {"hookEventName": "SessionStart", "additionalContext": "\n\n".join(contexts)}
+        context = "\n\n".join(contexts)
+        if len(context) > MAX_SESSION_CONTEXT_CHARS:
+            suffix = "\n\n[Additional project memory was truncated to the RouteCraft hook budget.]"
+            context = context[: MAX_SESSION_CONTEXT_CHARS - len(suffix)].rstrip() + suffix
+        merged["hookSpecificOutput"] = {"hookEventName": "SessionStart", "additionalContext": context}
     if reasons:
         merged.update({"decision": "block", "reason": "\n\n".join(reasons)})
     if messages:
@@ -354,15 +411,19 @@ def evaluate(event: Mapping[str, Any]) -> dict[str, Any]:
     name = event.get("hook_event_name")
     if name == "SessionStart":
         source_result = start(event, config) if config else {}
-        return merge_results(name, source_result, memory_start())
+        return merge_results(name, source_result, memory_start(), local_memory_start(event))
     if name == "Stop":
         source_result = stop(event, config) if config else {}
-        return merge_results(name, source_result, memory_stop(event))
+        evaluation_result = memory_stop(event)
+        if source_result.get("decision") == "block" or evaluation_result.get("decision") == "block":
+            return merge_results(name, source_result, evaluation_result)
+        return merge_results(name, source_result, evaluation_result, local_memory_stop(event))
     return {}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     del argv
+    configure_text_streams()
     try:
         event = json.load(sys.stdin)
         if not isinstance(event, dict):

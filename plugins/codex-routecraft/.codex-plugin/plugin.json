@@ -1,7 +1,7 @@
 {
   "name": "codex-routecraft",
-  "version": "0.5.1+codex.20260823011912",
-  "description": "Sol-led adaptive Codex orchestration with verified source control, parent verification, persistent decision memory, and opt-in effectiveness measurement across sessions and computers.",
+  "version": "0.5.1+codex.20260823165811",
+  "description": "Sol-led adaptive Codex orchestration with verified source control, reusable decision memory, and opt-in local project continuity.",
   "author": {
     "name": "tamas-hub",
     "url": "https://github.com/tamas-hub"
@@ -17,6 +17,7 @@
     "routing",
     "cost-optimization",
     "persistent-memory",
+    "project-memory",
     "decision-retrieval",
     "cross-device",
     "github-source-of-truth",
@@ -27,7 +28,7 @@
   "interface": {
     "displayName": "RouteCraft for Codex",
     "shortDescription": "Adaptive Sol-led routing, persistent decision memory, and measurable reuse.",
-    "longDescription": "RouteCraft keeps GPT-5.6 Sol as architect and acceptance owner, defaults to solo execution, and delegates only when a cheaper lane can safely substitute for root implementation. It routes bounded work to Luna, judgment-heavy work to Terra, parallelizes independent workstreams, and requests fresh Sol review for high-risk changes. Its Persistent Decision Layer retrieves relevant verified prior decisions, records compact reusable cases, promotes repeated candidates into validated rules, and can synchronize a separate private memory store across computers. An opt-in local evaluator measures retrieval usefulness, transfer, stale or misleading guidance, A/B/C memory modes, and operational outcomes without storing prompts or raw queries. The parent always verifies current evidence before acceptance.",
+    "longDescription": "RouteCraft keeps GPT-5.6 Sol as architect and acceptance owner, defaults to solo execution, and delegates only when a cheaper lane can safely substitute for root implementation. It routes bounded work to Luna, judgment-heavy work to Terra, parallelizes independent workstreams, and requests fresh Sol review for high-risk changes. Its Persistent Decision Layer keeps reusable verified cases and rules in a separate private store. An opt-in Memory Local bridge can inject bounded registered-project context and save a Git-metadata summary without reading transcripts. The parent always verifies current evidence before acceptance.",
     "developerName": "tamas-hub",
     "category": "Productivity",
     "capabilities": [

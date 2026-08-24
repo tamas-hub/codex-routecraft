@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,9 @@ assert SPEC and SPEC.loader
 GUARD = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = GUARD
 SPEC.loader.exec_module(GUARD)
+
+from routecraft_local import loop_bridge as LOCAL_BRIDGE
+from routecraft_local.service import RouteCraftService
 
 
 class RouteCraftSourceGuardTests(unittest.TestCase):
@@ -143,6 +147,170 @@ class RouteCraftSourceGuardTests(unittest.TestCase):
         )
         self.assertEqual(GUARD.evaluate(self.event("Stop")), {})
         self.assertFalse(state.exists())
+
+    def test_local_memory_context_and_idempotent_git_summary(self) -> None:
+        source_config = self.codex_home / "routecraft" / "source-control.json"
+        source_config.write_text(json.dumps({"enabled": False}), encoding="utf-8")
+        data_dir = self.base / "local-memory-data"
+        local_config = LOCAL_BRIDGE.config_path()
+        local_config.parent.mkdir(parents=True, exist_ok=True)
+        local_config.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "enabled": True,
+                    "data_dir": str(data_dir),
+                    "auto_context": True,
+                    "auto_session_summary": True,
+                    "context_profile": "compact",
+                    "max_context_chars": 4000,
+                }
+            ),
+            encoding="utf-8",
+        )
+        service = RouteCraftService(data_dir)
+        project = service.add_project("Loop project", repo_path=str(self.repo), current_objective="continue safely")
+        service.add_memory(project["id"], "decision", "Keep the existing interface", "Do not break the CLI", importance="high", verified=True)
+
+        started = GUARD.evaluate(self.event("SessionStart"))
+        context = started["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("ROUTECRAFT MEMORY LOCAL CONTEXT", context)
+        self.assertIn("Keep the existing interface", context)
+
+        (self.repo / "README.md").write_text("local memory change\n", encoding="utf-8")
+        stopped = GUARD.evaluate(self.event("Stop"))
+        self.assertIn("saved Git session summary", stopped["systemMessage"])
+        summaries = service.list_memories(project["id"], memory_type="session_summary")
+        self.assertEqual(1, len(summaries))
+        self.assertEqual("routecraft-loop", summaries[0]["source"])
+        self.assertNotIn("session-1", summaries[0]["source_ref"])
+
+        GUARD.evaluate(self.event("Stop"))
+        self.assertEqual(1, len(service.list_memories(project["id"], memory_type="session_summary")))
+
+    def test_local_memory_summary_finalizes_after_blocked_stop_reentry(self) -> None:
+        data_dir = self.base / "reentry-local-memory-data"
+        local_config = LOCAL_BRIDGE.config_path()
+        local_config.parent.mkdir(parents=True, exist_ok=True)
+        local_config.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "enabled": True,
+                    "data_dir": str(data_dir),
+                    "auto_context": False,
+                    "auto_session_summary": True,
+                    "context_profile": "compact",
+                    "max_context_chars": 4000,
+                }
+            ),
+            encoding="utf-8",
+        )
+        service = RouteCraftService(data_dir)
+        project = service.add_project("Reentry project", repo_path=str(self.repo))
+
+        GUARD.evaluate(self.event("SessionStart"))
+        state = LOCAL_BRIDGE._state_path("session-1")
+        self.assertTrue(state.is_file())
+        (self.repo / "README.md").write_text("blocked local memory change\n", encoding="utf-8")
+
+        blocked = GUARD.evaluate(self.event("Stop"))
+        self.assertEqual("block", blocked["decision"])
+        self.assertEqual([], service.list_memories(project["id"], memory_type="session_summary"))
+        self.assertTrue(state.is_file())
+
+        finalized = GUARD.evaluate(self.event("Stop", active=True))
+        self.assertIn("saved Git session summary", finalized["systemMessage"])
+        self.assertEqual(1, len(service.list_memories(project["id"], memory_type="session_summary")))
+        self.assertFalse(state.exists())
+
+    def test_local_memory_rejects_decision_store_as_data_directory(self) -> None:
+        decision_store = self.base / "decision-store"
+        decision_store.mkdir()
+        (decision_store / ".routecraft-store.json").write_text('{"schema_version":1}', encoding="utf-8")
+        with self.assertRaisesRegex(Exception, "must not reuse"):
+            RouteCraftService(decision_store)
+
+    def test_local_memory_does_not_open_database_during_round_robin_experiment(self) -> None:
+        source_config = self.codex_home / "routecraft" / "source-control.json"
+        source_config.write_text(json.dumps({"enabled": False}), encoding="utf-8")
+        data_dir = self.base / "must-not-be-created"
+        local_config = LOCAL_BRIDGE.config_path()
+        local_config.parent.mkdir(parents=True, exist_ok=True)
+        local_config.write_text(
+            json.dumps({"schema_version": 1, "enabled": True, "data_dir": str(data_dir)}),
+            encoding="utf-8",
+        )
+        evaluation = GUARD.evaluation_dir()
+        evaluation.mkdir(parents=True)
+        (evaluation / "config.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "enabled": True,
+                    "mode": "full",
+                    "experiment": {"enabled": True, "strategy": "round-robin", "sequence": ["off", "recall", "full"]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = GUARD.evaluate(self.event("SessionStart"))
+        context = result["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("ROUTECRAFT MEMORY LOCAL CONTEXT", context)
+        self.assertFalse(data_dir.exists())
+
+    def test_local_memory_disabled_does_not_create_database_or_change_legacy_context(self) -> None:
+        baseline = GUARD.evaluate(self.event("SessionStart"))
+        data_dir = self.base / "disabled-local-memory"
+        local_config = LOCAL_BRIDGE.config_path()
+        local_config.parent.mkdir(parents=True, exist_ok=True)
+        local_config.write_text(
+            json.dumps({"schema_version": 1, "enabled": False, "data_dir": str(data_dir)}),
+            encoding="utf-8",
+        )
+        actual = GUARD.evaluate(self.event("SessionStart"))
+        self.assertEqual(baseline, actual)
+        self.assertFalse(data_dir.exists())
+
+    def test_missing_local_package_preserves_existing_hook(self) -> None:
+        expected = GUARD.evaluate(self.event("SessionStart"))
+        original = GUARD.importlib.import_module
+
+        def missing(name: str):
+            if name == "routecraft_local.loop_bridge":
+                raise ModuleNotFoundError(name)
+            return original(name)
+
+        with mock.patch.object(GUARD.importlib, "import_module", side_effect=missing):
+            actual = GUARD.evaluate(self.event("SessionStart"))
+        self.assertEqual(expected, actual)
+
+    def test_merged_context_respects_hook_budget(self) -> None:
+        first = {"hookSpecificOutput": {"additionalContext": "A" * 3500}}
+        second = {"hookSpecificOutput": {"additionalContext": "B" * 3500}}
+        result = GUARD.merge_results("SessionStart", first, second)
+        context = result["hookSpecificOutput"]["additionalContext"]
+        self.assertLessEqual(len(context), GUARD.MAX_SESSION_CONTEXT_CHARS)
+        self.assertIn("truncated", context)
+
+    def test_hook_process_uses_utf8_when_windows_code_page_is_not_utf8(self) -> None:
+        env = os.environ.copy()
+        env["CODEX_HOME"] = str(self.codex_home)
+        env.pop("PYTHONUTF8", None)
+        env.pop("PYTHONIOENCODING", None)
+        payload = json.dumps(self.event("SessionStart"), ensure_ascii=False).encode("utf-8")
+        process = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=payload,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(0, process.returncode, process.stderr.decode("utf-8", errors="replace"))
+        result = json.loads(process.stdout.decode("utf-8"))
+        self.assertIn("GITHUB SOURCE-OF-TRUTH POLICY", result["hookSpecificOutput"]["additionalContext"])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "検索評価プロジェクト",
+    "description": "RouteCraft Memory Localのローカル検索評価用fixture",
+    "current_objective": "必要な判断を上位へ出す"
+  },
+  "memories": [
+    {"type": "decision", "title": "SQLite migration前にbackupする", "body": "schemaを変更する前にintegrity checkと一貫したbackupを作る。", "importance": "high", "tags": ["sqlite", "migration"], "verified": true},
+    {"type": "note", "title": "SQLiteの配色メモ", "body": "UI上のSQLite表示色についての一般メモ。", "importance": "low", "tags": ["ui"], "verified": false},
+    {"type": "failure", "title": "日本語stdinの文字化け", "body": "Windowsではredirected stdinをutf-8-sigで読む。", "importance": "high", "tags": ["windows", "utf-8"], "verified": true},
+    {"type": "constraint", "title": "外部interfaceへbindしない", "body": "Web UIは127.0.0.1だけで待ち受ける。", "importance": "high", "tags": ["security", "localhost"], "verified": true},
+    {"type": "next_action", "title": "macOS実機で起動確認", "body": "配布ZIPを展開しshell launcherと日本語pathを確認する。", "importance": "medium", "tags": ["macos", "release"], "verified": false},
+    {"type": "decision", "title": "無効化された古い同期案", "body": "SQLite DBそのものをGitへ自動commitする案。", "importance": "high", "tags": ["sync"], "verified": false, "active": false}
+  ],
+  "queries": [
+    {"query": "SQLite migration backup", "expected_title": "SQLite migration前にbackupする"},
+    {"query": "日本語 stdin Windows", "expected_title": "日本語stdinの文字化け"},
+    {"query": "127.0.0.1 bind", "expected_title": "外部interfaceへbindしない"},
+    {"query": "macOS ZIP", "expected_title": "macOS実機で起動確認"}
+  ],
+  "inactive_must_not_match": "無効化された古い同期案"
+}
