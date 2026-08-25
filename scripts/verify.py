@@ -21,8 +21,8 @@ LOCAL_PACKAGE = PLUGIN / "scripts" / "routecraft_local"
 LOCAL_VERSION_FILE = ROOT / "release" / "VERSION"
 LOCAL_VERSION = "1.0.0"
 
-EXPECTED_VERSION = "0.7.3"
-EXPECTED_VERSION_PATTERN = re.compile(r"^0\.7\.3\+codex\.[a-z0-9][a-z0-9-]*$")
+EXPECTED_VERSION = "0.7.4"
+EXPECTED_VERSION_PATTERN = re.compile(r"^0\.7\.4\+codex\.[a-z0-9][a-z0-9-]*$")
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),

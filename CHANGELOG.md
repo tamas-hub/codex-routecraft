@@ -1,5 +1,10 @@
 # Changelog
 
+## RouteCraft Local Runtime 0.7.4 - 2026-08-25
+
+- Supersede the CI-rejected `v0.7.3` source tag without rewriting release history. Versions 0.7.1 through 0.7.3 were not installed into the production Plugin.
+- Isolate the POSIX installer rollback test from the hosted Windows runner Git command by using an explicit same-shell launcher instead of relying on platform-dependent `BASH_ENV` path conversion.
+
 ## RouteCraft Local Runtime 0.7.3 - 2026-08-25
 
 - Supersede the CI-rejected `v0.7.2` source tag without rewriting release history. Neither 0.7.1 nor 0.7.2 was installed into the production Plugin.

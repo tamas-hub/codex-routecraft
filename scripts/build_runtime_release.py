@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build deterministic, pinned RouteCraft Runtime 0.7.3 starter packages.
+"""Build deterministic, pinned RouteCraft Runtime 0.7.4 starter packages.
 
 The builder deliberately refuses to infer a release tag or commit. It reads the
 source archive from the supplied Git commit, not from the working tree, and it
@@ -23,7 +23,7 @@ from typing import Iterable, Sequence
 
 
 PRODUCT = "RouteCraft Local Runtime"
-VERSION = "0.7.3"
+VERSION = "0.7.4"
 OFFICIAL_REPOSITORY = "https://github.com/tamas-hub/codex-routecraft.git"
 PREFIX = f"routecraft-runtime-{VERSION}"
 RELEASE_TAG = f"v{VERSION}"
@@ -440,7 +440,7 @@ def build(source_tree: Path, output_dir: Path, tag: str, commit: str) -> dict[st
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build pinned RouteCraft Runtime 0.7.3 starter packages")
+    parser = argparse.ArgumentParser(description="Build pinned RouteCraft Runtime 0.7.4 starter packages")
     parser.add_argument("--source-tree", required=True, help="Dedicated official RouteCraft Git checkout")
     parser.add_argument("--output-dir", required=True, help="Local output directory; no publication is performed")
     parser.add_argument("--tag", required=True, help="Existing immutable release tag")

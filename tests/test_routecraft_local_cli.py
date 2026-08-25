@@ -97,7 +97,7 @@ class RouteCraftLocalCliTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, version.returncode)
-        self.assertEqual("routecraft 0.7.3 (memory-local 1.0.0)", version.stdout.decode("utf-8").strip())
+        self.assertEqual("routecraft 0.7.4 (memory-local 1.0.0)", version.stdout.decode("utf-8").strip())
 
         for args in (
             ("--help",),
