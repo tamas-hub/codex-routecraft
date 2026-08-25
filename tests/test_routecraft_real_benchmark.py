@@ -230,7 +230,7 @@ class RealBenchmarkTests(unittest.TestCase):
             patch.object(
                 benchmark,
                 "_verify_routecraft_plugin_registration",
-                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.2"},
+                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.3"},
             ),
             patch.object(benchmark, "_verify_sandbox_profiles") as verify,
         ):
@@ -458,7 +458,7 @@ class RealBenchmarkTests(unittest.TestCase):
             patch.object(
                 benchmark,
                 "_verify_routecraft_plugin_registration",
-                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.2"},
+                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.3"},
             ),
             patch.object(benchmark, "_verify_sandbox_profiles"),
         ):

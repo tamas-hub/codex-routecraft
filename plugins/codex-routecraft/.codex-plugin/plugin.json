@@ -1,6 +1,6 @@
 {
   "name": "codex-routecraft",
-  "version": "0.7.2+codex.20260825032959",
+  "version": "0.7.3+codex.20260825035426",
   "description": "Unified RouteCraft Local Runtime with evidence-driven durable execution graphs, routing, memory, quality checks, and optional Control Center telemetry.",
   "author": {
     "name": "tamas-hub",

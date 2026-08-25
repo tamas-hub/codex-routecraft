@@ -66,7 +66,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
         self,
         base: Path,
         *,
-        version: str = "0.7.2+codex.20260825013909",
+        version: str = "0.7.3+codex.20260825013909",
     ) -> tuple[Path, str, str, object]:
         source = base / "source"
         source.mkdir()
@@ -81,6 +81,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
         fixture_templates.mkdir(parents=True)
         for name in ("README-JA.md", "install-routecraft.ps1", "install-routecraft.sh"):
             shutil.copyfile(ROOT / "release" / "runtime" / name, fixture_templates / name)
+        (fixture_templates / "install-routecraft.sh").chmod(0o755)
         shutil.copyfile(ROOT / "LICENSE", source / "LICENSE")
         manifest = source / "plugins" / "codex-routecraft" / ".codex-plugin" / "plugin.json"
         manifest.parent.mkdir(parents=True)
@@ -89,6 +90,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
         (scripts / "verify.py").write_text("print('verified')\n", encoding="utf-8")
         setup = scripts / "setup-local.sh"
         setup.write_text("#!/usr/bin/env sh\nset -eu\necho installed\n", encoding="utf-8")
+        setup.chmod(0o755)
         (scripts / "setup-local.ps1").write_text("Write-Host 'installed'\n", encoding="utf-8")
         device = source / "plugins" / "codex-routecraft" / "scripts" / "routecraft_device.py"
         device.parent.mkdir(parents=True, exist_ok=True)
@@ -99,9 +101,10 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
         self.git(source, "update-index", "--chmod=+x", "release/runtime/install-routecraft.sh")
         self.git(source, "commit", "-m", "release fixture")
         commit = self.git(source, "rev-parse", "HEAD")
-        tag = "v0.7.2"
+        tag = "v0.7.3"
         self.git(source, "tag", tag)
         builder = load_builder(fixture_builder, f"build_runtime_release_fixture_{id(base)}")
+        self.assertEqual("", self.git(source, "status", "--porcelain", "--untracked-files=all"))
         return source.resolve(), tag, commit, builder
 
     def commit_and_retag(self, source: Path, tag: str, message: str) -> str:
@@ -122,7 +125,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
             manifest2 = builder.build(source, second, tag, commit)
 
             self.assertEqual(manifest1, manifest2)
-            self.assertEqual("0.7.2", manifest1["version"])
+            self.assertEqual("0.7.3", manifest1["version"])
             self.assertEqual(commit, manifest1["source"]["commit"])
             self.assertEqual("stored", manifest1["zip_compression"])
             self.assertEqual("0.148.0", manifest1["requirements"]["codex_cli"]["tested_version"])
@@ -135,9 +138,9 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
             self.assertFalse(manifest1["product_boundaries"]["memory_local_changed"])
 
             expected_names = {
-                "routecraft-runtime-0.7.2-windows.zip",
-                "routecraft-runtime-0.7.2-macos.zip",
-                "routecraft-runtime-0.7.2-source.zip",
+                "routecraft-runtime-0.7.3-windows.zip",
+                "routecraft-runtime-0.7.3-macos.zip",
+                "routecraft-runtime-0.7.3-source.zip",
             }
             self.assertEqual(expected_names, {item["file"] for item in manifest1["artifacts"]})
             for name in expected_names | {"SHA256SUMS.txt", "release-manifest.json"}:
@@ -171,7 +174,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
                     self.assertNotIn(str(source).encode("utf-8"), combined)
                     self.assertNotIn(str(Path.home()).encode("utf-8"), combined)
 
-            windows = first / "routecraft-runtime-0.7.2-windows.zip"
+            windows = first / "routecraft-runtime-0.7.3-windows.zip"
             with zipfile.ZipFile(windows) as archive:
                 installer = next(name for name in archive.namelist() if name.endswith("/install-routecraft.ps1"))
                 mode = archive.getinfo(installer).external_attr >> 16
@@ -195,7 +198,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
                 release_pin = next(name for name in archive.namelist() if name.endswith("/release-pin.json"))
                 self.assertEqual("0.148.0", json.loads(archive.read(release_pin))["codex_cli_version"])
 
-            macos = first / "routecraft-runtime-0.7.2-macos.zip"
+            macos = first / "routecraft-runtime-0.7.3-macos.zip"
             with zipfile.ZipFile(macos) as archive:
                 installer = next(name for name in archive.namelist() if name.endswith("/install-routecraft.sh"))
                 info = archive.getinfo(installer)
@@ -210,7 +213,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
                 self.assertNotIn("setup-local.sh", content)
                 self.assertLess(content.index("resolved_commit="), content.index('python3 "$VERIFY"'))
 
-            source_archive = first / "routecraft-runtime-0.7.2-source.zip"
+            source_archive = first / "routecraft-runtime-0.7.3-source.zip"
             with zipfile.ZipFile(source_archive) as archive:
                 names = archive.namelist()
                 self.assertTrue(any(name.endswith("/plugins/codex-routecraft/.codex-plugin/plugin.json") for name in names))
@@ -225,9 +228,9 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(builder.ReleaseError, "40-character"):
                 builder.build(source, base / "short", tag, commit[:12])
             with self.assertRaisesRegex(builder.ReleaseError, "portable ref"):
-                builder.build(source, base / "unsafe-tag", "../v0.7.2", commit)
-            with self.assertRaisesRegex(builder.ReleaseError, "exactly v0.7.2"):
-                builder.build(source, base / "wrong-tag", "v0.7.2-rc1", commit)
+                builder.build(source, base / "unsafe-tag", "../v0.7.3", commit)
+            with self.assertRaisesRegex(builder.ReleaseError, "exactly v0.7.3"):
+                builder.build(source, base / "wrong-tag", "v0.7.3-rc1", commit)
 
             self.git(source, "remote", "set-url", "origin", "https://example.invalid/not-routecraft.git")
             with self.assertRaisesRegex(builder.ReleaseError, "Unexpected origin"):
@@ -320,7 +323,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
             builder.build(source, output, tag, commit)
 
             windows_extract = base / "windows"
-            with zipfile.ZipFile(output / "routecraft-runtime-0.7.2-windows.zip") as archive:
+            with zipfile.ZipFile(output / "routecraft-runtime-0.7.3-windows.zip") as archive:
                 archive.extractall(windows_extract)
             windows_root = next(windows_extract.iterdir())
             destination = base / "windows-destination"
@@ -413,8 +416,34 @@ exit 9
 """,
                     encoding="utf-8",
                 )
+                windows_launcher = fake_bin / "invoke-installer.ps1"
+                windows_launcher.write_text(
+                    """[CmdletBinding()]
+param(
+    [ValidateSet('Plan', 'Apply')][string]$Mode = 'Plan',
+    [string]$Confirm,
+    [Parameter(Mandatory = $true)][string]$SourceDir
+)
+function global:git {
+    & $env:ROUTECRAFT_TEST_POWERSHELL -NoProfile -ExecutionPolicy Bypass -File $env:ROUTECRAFT_TEST_FAKE_GIT @args
+}
+function global:codex {
+    Write-Output ('codex-cli ' + $env:ROUTECRAFT_TEST_CODEX_VERSION)
+    $global:LASTEXITCODE = 0
+}
+if ($PSBoundParameters.ContainsKey('Confirm')) {
+    & $env:ROUTECRAFT_TEST_INSTALLER -Mode $Mode -Confirm $Confirm -SourceDir $SourceDir
+} else {
+    & $env:ROUTECRAFT_TEST_INSTALLER -Mode $Mode -SourceDir $SourceDir
+}
+""",
+                    encoding="utf-8",
+                )
                 windows_env = os.environ.copy()
                 windows_env["PATH"] = str(fake_bin) + os.pathsep + windows_env.get("PATH", "")
+                windows_env["ROUTECRAFT_TEST_POWERSHELL"] = powershell
+                windows_env["ROUTECRAFT_TEST_FAKE_GIT"] = str(fake_bin / "fake-git.ps1")
+                windows_env["ROUTECRAFT_TEST_INSTALLER"] = str(windows_root / "install-routecraft.ps1")
                 marker = base / "windows-setup.marker"
                 windows_env["ROUTECRAFT_TEST_SETUP_MARKER"] = str(marker)
                 windows_env["ROUTECRAFT_TEST_OFFICIAL_REPOSITORY"] = builder.OFFICIAL_REPOSITORY
@@ -429,7 +458,7 @@ exit 9
                         "-ExecutionPolicy",
                         "Bypass",
                         "-File",
-                        str(windows_root / "install-routecraft.ps1"),
+                        str(windows_launcher),
                         "-Mode",
                         "Plan",
                         "-SourceDir",
@@ -437,6 +466,10 @@ exit 9
                     ],
                     cwd=windows_root,
                     env=windows_env,
+                )
+                self.assertTrue(
+                    plan.stdout.strip(),
+                    f"installer plan returned no JSON; stderr={plan.stderr!r}",
                 )
                 plan_data = json.loads(plan.stdout)
                 self.assertEqual("plan", plan_data["mode"])
@@ -451,7 +484,7 @@ exit 9
                         "-ExecutionPolicy",
                         "Bypass",
                         "-File",
-                        str(windows_root / "install-routecraft.ps1"),
+                        str(windows_launcher),
                         "-Mode",
                         "Plan",
                         "-SourceDir",
@@ -470,7 +503,7 @@ exit 9
                         "-ExecutionPolicy",
                         "Bypass",
                         "-File",
-                        str(windows_root / "install-routecraft.ps1"),
+                        str(windows_launcher),
                         "-Mode",
                         "Apply",
                         "-SourceDir",
@@ -489,7 +522,7 @@ exit 9
                         "-ExecutionPolicy",
                         "Bypass",
                         "-File",
-                        str(windows_root / "install-routecraft.ps1"),
+                        str(windows_launcher),
                         "-Mode",
                         "Apply",
                         "-Confirm",
@@ -500,7 +533,7 @@ exit 9
                     cwd=windows_root,
                     env=windows_env,
                 )
-                self.assertIn(f"RouteCraft 0.7.2 installed from {commit}", applied.stdout)
+                self.assertIn(f"RouteCraft 0.7.3 installed from {commit}", applied.stdout)
                 self.assertEqual("installed", marker.read_text(encoding="utf-8-sig").strip())
 
                 existing = base / "windows-existing"
@@ -527,7 +560,7 @@ exit 9
                         "-ExecutionPolicy",
                         "Bypass",
                         "-File",
-                        str(windows_root / "install-routecraft.ps1"),
+                        str(windows_launcher),
                         "-Mode",
                         "Apply",
                         "-Confirm",
@@ -543,7 +576,7 @@ exit 9
                 self.assertIn("restored the existing RouteCraft checkout", failed.stdout + failed.stderr)
 
             macos_extract = base / "macos"
-            with zipfile.ZipFile(output / "routecraft-runtime-0.7.2-macos.zip") as archive:
+            with zipfile.ZipFile(output / "routecraft-runtime-0.7.3-macos.zip") as archive:
                 archive.extractall(macos_extract)
             macos_root = next(macos_extract.iterdir())
             launcher = macos_root / "install-routecraft.sh"
@@ -575,7 +608,7 @@ exit 9
                     cwd=macos_root,
                     env=env,
                 )
-                self.assertIn("RouteCraft Local Runtime 0.7.2 install plan", plan.stdout)
+                self.assertIn("RouteCraft Local Runtime 0.7.3 install plan", plan.stdout)
                 self.assertIn(commit, plan.stdout)
                 self.assertFalse(destination.exists())
                 wrong_codex_env = env.copy()

@@ -44,7 +44,7 @@ The bridge remains OFF until configured, never auto-registers a repository, and 
 ## Install from the audited GitHub tag
 
 ```sh
-codex plugin marketplace add tamas-hub/codex-routecraft --ref v0.7.2
+codex plugin marketplace add tamas-hub/codex-routecraft --ref v0.7.3
 codex plugin add codex-routecraft@routecraft
 ```
 

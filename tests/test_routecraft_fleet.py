@@ -70,7 +70,7 @@ class RouteCraftFleetTests(unittest.TestCase):
             check=True,
         )
 
-        self.assertEqual(result.stdout.strip(), "routecraft-device 0.7.2")
+        self.assertEqual(result.stdout.strip(), "routecraft-device 0.7.3")
         self.assertEqual(result.stderr, "")
 
     def test_normalize_remote_accepts_common_github_forms(self) -> None:
@@ -332,7 +332,7 @@ class RouteCraftFleetTests(unittest.TestCase):
     def test_same_version_install_is_noop_without_cache_backup_growth(self) -> None:
         home = self.base / "codex-home"
         source = ROOT
-        version = "0.7.2"
+        version = "0.7.3"
         expected = {"schema_version": 1, "plugin_version": version, "last_bootstrap_at": "ignored"}
         cache = home / "plugins" / "cache" / DEVICE.MARKETPLACE / "codex-routecraft" / version
         shutil.copytree(DEVICE.PLUGIN_ROOT, cache)
@@ -356,7 +356,7 @@ class RouteCraftFleetTests(unittest.TestCase):
     def test_same_version_cache_directory_is_not_enough_for_noop(self) -> None:
         home = self.base / "codex-home"
         source = ROOT
-        version = "0.7.2"
+        version = "0.7.3"
         expected = {"schema_version": 1, "plugin_version": version}
         cache = home / "plugins" / "cache" / DEVICE.MARKETPLACE / "codex-routecraft" / version
         shutil.copytree(DEVICE.PLUGIN_ROOT, cache)
@@ -379,7 +379,7 @@ class RouteCraftFleetTests(unittest.TestCase):
     def test_plugin_transaction_rolls_back_agent_config_and_cache_after_staged_failure(self) -> None:
         home = self.base / "codex-home"
         source = ROOT
-        version = "0.7.2"
+        version = "0.7.3"
         old_agent = home / "agents" / DEVICE.AGENTS[0]
         old_agent.parent.mkdir(parents=True)
         old_agent.write_text("old-agent", encoding="utf-8")
@@ -540,7 +540,7 @@ class RouteCraftFleetTests(unittest.TestCase):
 
         def wrong_version(_codex: str, *args: str) -> dict:
             if args == ("plugin", "list"):
-                return {"installed": [{"pluginId": DEVICE.PLUGIN, "version": "0.7.2"}]}
+                return {"installed": [{"pluginId": DEVICE.PLUGIN, "version": "0.7.3"}]}
             return {"marketplaces": [{"name": DEVICE.MARKETPLACE}]}
 
         completed = subprocess.CompletedProcess([], 0, "", "")
@@ -593,17 +593,17 @@ class RouteCraftFleetTests(unittest.TestCase):
 
     def test_apply_wraps_non_fleet_automatic_rollback_failure(self) -> None:
         home = self.base / "codex-home"
-        expected = {"schema_version": 1, "plugin_version": "0.7.2", "last_bootstrap_at": "new"}
+        expected = {"schema_version": 1, "plugin_version": "0.7.3", "last_bootstrap_at": "new"}
         with mock.patch.dict(os.environ, {"CODEX_HOME": str(home)}), mock.patch.object(DEVICE, "inspect_install_state", return_value=self._state()), mock.patch.object(DEVICE, "install_plugin", side_effect=DEVICE.FleetError("injected install failure")), mock.patch.object(DEVICE, "rollback_installation", side_effect=OSError("injected rollback failure")):
             with self.assertRaises(DEVICE.FleetError) as caught:
-                DEVICE.apply_plugin_transaction(ROOT, "0.7.2", expected, None)
+                DEVICE.apply_plugin_transaction(ROOT, "0.7.3", expected, None)
         self.assertIn("automatic rollback failed", str(caught.exception))
         self.assertNotIn("injected rollback failure", str(caught.exception))
 
     def test_install_apply_writes_minimal_local_config_transactionally(self) -> None:
         home = self.base / "codex-home"
         source = ROOT
-        version = "0.7.2"
+        version = "0.7.3"
         initial = self._state()
         verified = self._state(**{name: True for name in (
             "plugin_present", "marketplace_present", "plugin_version_match", "plugin_source_match",
@@ -630,7 +630,7 @@ class RouteCraftFleetTests(unittest.TestCase):
         }
         with mock.patch.dict(os.environ, {"CODEX_HOME": str(home)}):
             DEVICE.write_json(home / "routecraft" / "device.json", existing)
-            config = DEVICE.minimal_install_config(ROOT, "0.7.2")
+            config = DEVICE.minimal_install_config(ROOT, "0.7.3")
         self.assertEqual(config["memory_remote"], existing["memory_remote"])
         self.assertEqual(config["device_id"], "safe-device")
 

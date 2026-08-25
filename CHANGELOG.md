@@ -1,5 +1,10 @@
 # Changelog
 
+## RouteCraft Local Runtime 0.7.3 - 2026-08-25
+
+- Supersede the CI-rejected `v0.7.2` source tag without rewriting release history. Neither 0.7.1 nor 0.7.2 was installed into the production Plugin.
+- Keep the production runtime fixes from 0.7.2 and correct the cross-platform release-test harness so the pinned starter packages are validated on both hosted Ubuntu and hosted Windows before installation.
+
 ## RouteCraft Local Runtime 0.7.2 - 2026-08-25
 
 - Supersede the CI-rejected `v0.7.1` source tag without rewriting release history. Version 0.7.1 was not installed into the production Plugin.
