@@ -183,9 +183,9 @@ def _git_state(root: Path) -> tuple[bool, int, int, int]:
 def _plugin_version(source_root: Path) -> str:
     try:
         manifest = json.loads((source_root / "plugins" / "codex-routecraft" / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        return _label(manifest.get("version"), "0.7.1")
+        return _label(manifest.get("version"), "0.7.2")
     except (OSError, ValueError, json.JSONDecodeError):
-        return "0.7.1"
+        return "0.7.2"
 
 
 def _file_digest(path: Path) -> str | None:
@@ -277,7 +277,7 @@ def _run_app_server(command: list[str]) -> Mapping[str, object]:
                 return payload["result"]
 
     try:
-        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.7.1"}}})
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.7.2"}}})
         receive(1)
         send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         send({"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}})

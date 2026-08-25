@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit
 
-VERSION = "0.7.1"
+VERSION = "0.7.2"
 FLEET_SCHEMA = 1
 LAYOUT_VERSION = 1
 SOURCE_REMOTE = "https://github.com/tamas-hub/codex-routecraft.git"

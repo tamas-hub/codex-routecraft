@@ -1,6 +1,8 @@
 # Changelog
 
-## RouteCraft Local Runtime 0.7.1 - 2026-08-25
+## RouteCraft Local Runtime 0.7.2 - 2026-08-25
+
+- Supersede the CI-rejected `v0.7.1` source tag without rewriting release history. Version 0.7.1 was not installed into the production Plugin.
 
 - Made native Windows Real Agent Benchmark fail closed before authentication inspection, credential copying, UAC/helper setup, artifact creation, or model invocation when a separate broker credential boundary cannot be proven with Codex CLI 0.148.0.
 - Kept deterministic benchmarks, Graph observe, Doctor, Security validation, and the 0.6 fast path available on native Windows; Real Agent runs require a successful model-free isolation preflight on macOS, Linux, WSL2, or a dedicated VM.

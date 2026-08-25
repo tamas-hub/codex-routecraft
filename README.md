@@ -1,6 +1,6 @@
 # RouteCraft for Codex
 
-## RouteCraft Local Runtime 0.7.1
+## RouteCraft Local Runtime 0.7.2
 
 This repository also contains RouteCraft Memory Local, a separate standard-library-only local product for carrying structured project decisions, failures, constraints, important files, and next actions across AI coding sessions. It uses a local SQLite database, Japanese-capable search, bounded Context Packs, six-file Handoff Packs, read-only Git metadata, confirmed backup/restore, and a Japanese-first Web UI bound only to `127.0.0.1`.
 
@@ -21,7 +21,7 @@ Python 3.11+ is required. Git is optional and used only for read-only repository
 
 RouteCraft is a Codex plugin/skill for software-delivery orchestration across the GPT-5.6 family. The primary Sol session owns architecture and acceptance. Bounded implementation can move to Luna, judgment-heavy implementation can move to Terra, and high-risk changes can receive a fresh Sol review.
 
-V0.7.1 retains the 0.7 Graph IR, fail-closed compiler, evidence gates, dedicated SQLite Graph State Store, hash-chain checkpoints, resume, selective retry, verified constraint feedback, and observe-first policy evaluation. It additionally fails closed before any credential or model boundary on native Windows when safe Real Agent Benchmark isolation cannot be proven. Deterministic benchmarks, Graph observe, Doctor, Security validation, and the 0.6 single-node fast path remain available. Real Agent runs require a successful model-free isolation preflight on macOS, Linux, WSL2, or a dedicated VM. Control Center transport remains optional: when `CONTROL_CENTER_ENABLED` is absent or false, core modules do not import it and no outbound delivery is attempted.
+V0.7.2 retains the 0.7 Graph IR, fail-closed compiler, evidence gates, dedicated SQLite Graph State Store, hash-chain checkpoints, resume, selective retry, verified constraint feedback, and observe-first policy evaluation. It additionally fails closed before any credential or model boundary on native Windows when safe Real Agent Benchmark isolation cannot be proven. Deterministic benchmarks, Graph observe, Doctor, Security validation, and the 0.6 single-node fast path remain available. Real Agent runs require a successful model-free isolation preflight on macOS, Linux, WSL2, or a dedicated VM. Control Center transport remains optional: when `CONTROL_CENTER_ENABLED` is absent or false, core modules do not import it and no outbound delivery is attempted.
 
 Unavailable benchmark values remain `null` in local and schema-v4 evidence. The legacy schema-v3 `benchmark_runs` table has non-null metric columns, so the collector omits an unavailable legacy row instead of inventing a numeric zero.
 
@@ -53,7 +53,7 @@ V0.3.0 adds a Persistent Decision Layer:
 
 The goal is not "use more agents" or "store more text." The goal is **use the cheapest credible lane and avoid paying the same search/reasoning cost twice**.
 
-> Status: v0.7.1 observe-first. Codex multi-agent APIs are evolving; RouteCraft is capability-aware and fails conservatively when a requested model/effort lane or benchmark isolation boundary cannot be selected and verified.
+> Status: v0.7.2 observe-first. Codex multi-agent APIs are evolving; RouteCraft is capability-aware and fails conservatively when a requested model/effort lane or benchmark isolation boundary cannot be selected and verified.
 
 ## Architecture
 
@@ -124,7 +124,7 @@ The goal is not "use more agents" or "store more text." The goal is **use the ch
 ### From the audited release tag
 
 ```sh
-codex plugin marketplace add tamas-hub/codex-routecraft --ref v0.7.1
+codex plugin marketplace add tamas-hub/codex-routecraft --ref v0.7.2
 codex plugin add codex-routecraft@routecraft
 ```
 

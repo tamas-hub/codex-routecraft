@@ -1,6 +1,6 @@
-# RouteCraft Runtime 0.7.1 スターター
+# RouteCraft Runtime 0.7.2 スターター
 
-このパッケージは、RouteCraft Local Runtime 0.7.1をWindowsまたはmacOSへ導入するための小さなスターターです。ソースを同梱スクリプトから直接実行するのではなく、公式Repositoryからrelease tagを取得し、固定commitと一致した場合だけRepository verifierと公式setup scriptを実行します。
+このパッケージは、RouteCraft Local Runtime 0.7.2をWindowsまたはmacOSへ導入するための小さなスターターです。ソースを同梱スクリプトから直接実行するのではなく、公式Repositoryからrelease tagを取得し、固定commitと一致した場合だけRepository verifierと公式setup scriptを実行します。
 
 ## Release pin
 
@@ -28,14 +28,14 @@ Python、Codex CLI、認証情報はこのZIPに含まれません。管理者�
 展開前にPowerShellでhashを表示し、`SHA256SUMS.txt`の同名行と完全一致することを確認します。
 
 ```powershell
-Get-FileHash .\routecraft-runtime-0.7.1-windows.zip -Algorithm SHA256
+Get-FileHash .\routecraft-runtime-0.7.2-windows.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
 Windowsがダウンロード由来のMark-of-the-Webを付けた場合は、hash照合とスクリプト内容の確認後に、展開先のスクリプトだけを明示的に解除します。ディレクトリ全体は一括解除しません。
 
 ```powershell
-Unblock-File .\routecraft-runtime-0.7.1-windows\install-routecraft.ps1
+Unblock-File .\routecraft-runtime-0.7.2-windows\install-routecraft.ps1
 ```
 
 最初にPlanを確認します。Planはclone、fetch、checkout、Plugin変更を行いません。
@@ -57,7 +57,7 @@ Unblock-File .\routecraft-runtime-0.7.1-windows\install-routecraft.ps1
 展開前にhashを照合します。
 
 ```sh
-shasum -a 256 routecraft-runtime-0.7.1-macos.zip
+shasum -a 256 routecraft-runtime-0.7.2-macos.zip
 cat SHA256SUMS.txt
 ```
 

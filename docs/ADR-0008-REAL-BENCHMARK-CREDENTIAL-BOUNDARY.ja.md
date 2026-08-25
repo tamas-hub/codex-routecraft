@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-25
-- Runtime target: 0.7.1
+- Runtime target: 0.7.2
 - Related: ADR-0007, Graph IR v1, transport v4
 
 ## Context

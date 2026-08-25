@@ -111,7 +111,7 @@ $SourceDir = [System.IO.Path]::GetFullPath($SourceDir)
 $Plan = [ordered]@{
     mode = $Mode.ToLowerInvariant()
     product = 'RouteCraft Local Runtime'
-    version = '0.7.1'
+    version = '0.7.2'
     repository = $OfficialRepository
     tag = $ReleaseTag
     expected_commit = $ExpectedCommit
@@ -226,7 +226,7 @@ try {
 }
 
 Write-Host ''
-Write-Host "RouteCraft 0.7.1 installed from $ExpectedCommit." -ForegroundColor Green
+Write-Host "RouteCraft 0.7.2 installed from $ExpectedCommit." -ForegroundColor Green
 Write-Host 'Close existing Codex tasks and start a fresh task before verification.'
 Write-Host 'Private Decision Store and Control Center were not configured.'
 Write-Host 'The local transaction id in the JSON output can be used with routecraft-device rollback.'

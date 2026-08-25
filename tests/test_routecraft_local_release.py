@@ -116,7 +116,7 @@ class RouteCraftLocalReleaseTests(unittest.TestCase):
             root = next(extract.iterdir())
             launcher = root / "app" / "routecraft.py"
             version = self.run_python(str(launcher), "--version", cwd=root)
-            self.assertEqual("routecraft 0.7.1 (memory-local 1.0.0)", version.stdout.strip())
+            self.assertEqual("routecraft 0.7.2 (memory-local 1.0.0)", version.stdout.strip())
             data = base / "smoke-data"
             self.run_python(str(launcher), "--data-dir", str(data), "init", cwd=root)
             project = json.loads(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import shutil
@@ -9,6 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -20,16 +20,15 @@ BUILDER_PATH = ROOT / "scripts" / "build_runtime_release.py"
 
 
 def load_builder(path: Path, module_name: str):
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec and spec.loader
-    builder = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = builder
-    previous = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
-    try:
-        spec.loader.exec_module(builder)
-    finally:
-        sys.dont_write_bytecode = previous
+    # Execute a release-fixture builder without the import machinery writing a
+    # __pycache__ entry into the very Git checkout whose clean-tree guard is
+    # under test.  The production builder retains that guard unchanged.
+    builder = types.ModuleType(module_name)
+    builder.__file__ = str(path)
+    builder.__package__ = ""
+    sys.modules[module_name] = builder
+    code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
+    exec(code, builder.__dict__)  # routecraft-security: scanner-test-fixture
     return builder
 
 
@@ -67,7 +66,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
         self,
         base: Path,
         *,
-        version: str = "0.7.1+codex.20260825013909",
+        version: str = "0.7.2+codex.20260825013909",
     ) -> tuple[Path, str, str, object]:
         source = base / "source"
         source.mkdir()
@@ -100,7 +99,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
         self.git(source, "update-index", "--chmod=+x", "release/runtime/install-routecraft.sh")
         self.git(source, "commit", "-m", "release fixture")
         commit = self.git(source, "rev-parse", "HEAD")
-        tag = "v0.7.1"
+        tag = "v0.7.2"
         self.git(source, "tag", tag)
         builder = load_builder(fixture_builder, f"build_runtime_release_fixture_{id(base)}")
         return source.resolve(), tag, commit, builder
@@ -123,7 +122,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
             manifest2 = builder.build(source, second, tag, commit)
 
             self.assertEqual(manifest1, manifest2)
-            self.assertEqual("0.7.1", manifest1["version"])
+            self.assertEqual("0.7.2", manifest1["version"])
             self.assertEqual(commit, manifest1["source"]["commit"])
             self.assertEqual("stored", manifest1["zip_compression"])
             self.assertEqual("0.148.0", manifest1["requirements"]["codex_cli"]["tested_version"])
@@ -136,9 +135,9 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
             self.assertFalse(manifest1["product_boundaries"]["memory_local_changed"])
 
             expected_names = {
-                "routecraft-runtime-0.7.1-windows.zip",
-                "routecraft-runtime-0.7.1-macos.zip",
-                "routecraft-runtime-0.7.1-source.zip",
+                "routecraft-runtime-0.7.2-windows.zip",
+                "routecraft-runtime-0.7.2-macos.zip",
+                "routecraft-runtime-0.7.2-source.zip",
             }
             self.assertEqual(expected_names, {item["file"] for item in manifest1["artifacts"]})
             for name in expected_names | {"SHA256SUMS.txt", "release-manifest.json"}:
@@ -172,7 +171,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
                     self.assertNotIn(str(source).encode("utf-8"), combined)
                     self.assertNotIn(str(Path.home()).encode("utf-8"), combined)
 
-            windows = first / "routecraft-runtime-0.7.1-windows.zip"
+            windows = first / "routecraft-runtime-0.7.2-windows.zip"
             with zipfile.ZipFile(windows) as archive:
                 installer = next(name for name in archive.namelist() if name.endswith("/install-routecraft.ps1"))
                 mode = archive.getinfo(installer).external_attr >> 16
@@ -196,7 +195,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
                 release_pin = next(name for name in archive.namelist() if name.endswith("/release-pin.json"))
                 self.assertEqual("0.148.0", json.loads(archive.read(release_pin))["codex_cli_version"])
 
-            macos = first / "routecraft-runtime-0.7.1-macos.zip"
+            macos = first / "routecraft-runtime-0.7.2-macos.zip"
             with zipfile.ZipFile(macos) as archive:
                 installer = next(name for name in archive.namelist() if name.endswith("/install-routecraft.sh"))
                 info = archive.getinfo(installer)
@@ -211,7 +210,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
                 self.assertNotIn("setup-local.sh", content)
                 self.assertLess(content.index("resolved_commit="), content.index('python3 "$VERIFY"'))
 
-            source_archive = first / "routecraft-runtime-0.7.1-source.zip"
+            source_archive = first / "routecraft-runtime-0.7.2-source.zip"
             with zipfile.ZipFile(source_archive) as archive:
                 names = archive.namelist()
                 self.assertTrue(any(name.endswith("/plugins/codex-routecraft/.codex-plugin/plugin.json") for name in names))
@@ -226,9 +225,9 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(builder.ReleaseError, "40-character"):
                 builder.build(source, base / "short", tag, commit[:12])
             with self.assertRaisesRegex(builder.ReleaseError, "portable ref"):
-                builder.build(source, base / "unsafe-tag", "../v0.7.1", commit)
-            with self.assertRaisesRegex(builder.ReleaseError, "exactly v0.7.1"):
-                builder.build(source, base / "wrong-tag", "v0.7.1-rc1", commit)
+                builder.build(source, base / "unsafe-tag", "../v0.7.2", commit)
+            with self.assertRaisesRegex(builder.ReleaseError, "exactly v0.7.2"):
+                builder.build(source, base / "wrong-tag", "v0.7.2-rc1", commit)
 
             self.git(source, "remote", "set-url", "origin", "https://example.invalid/not-routecraft.git")
             with self.assertRaisesRegex(builder.ReleaseError, "Unexpected origin"):
@@ -321,7 +320,7 @@ class RouteCraftRuntimeReleaseTests(unittest.TestCase):
             builder.build(source, output, tag, commit)
 
             windows_extract = base / "windows"
-            with zipfile.ZipFile(output / "routecraft-runtime-0.7.1-windows.zip") as archive:
+            with zipfile.ZipFile(output / "routecraft-runtime-0.7.2-windows.zip") as archive:
                 archive.extractall(windows_extract)
             windows_root = next(windows_extract.iterdir())
             destination = base / "windows-destination"
@@ -501,7 +500,7 @@ exit 9
                     cwd=windows_root,
                     env=windows_env,
                 )
-                self.assertIn(f"RouteCraft 0.7.1 installed from {commit}", applied.stdout)
+                self.assertIn(f"RouteCraft 0.7.2 installed from {commit}", applied.stdout)
                 self.assertEqual("installed", marker.read_text(encoding="utf-8-sig").strip())
 
                 existing = base / "windows-existing"
@@ -544,7 +543,7 @@ exit 9
                 self.assertIn("restored the existing RouteCraft checkout", failed.stdout + failed.stderr)
 
             macos_extract = base / "macos"
-            with zipfile.ZipFile(output / "routecraft-runtime-0.7.1-macos.zip") as archive:
+            with zipfile.ZipFile(output / "routecraft-runtime-0.7.2-macos.zip") as archive:
                 archive.extractall(macos_extract)
             macos_root = next(macos_extract.iterdir())
             launcher = macos_root / "install-routecraft.sh"
@@ -576,7 +575,7 @@ exit 9
                     cwd=macos_root,
                     env=env,
                 )
-                self.assertIn("RouteCraft Local Runtime 0.7.1 install plan", plan.stdout)
+                self.assertIn("RouteCraft Local Runtime 0.7.2 install plan", plan.stdout)
                 self.assertIn(commit, plan.stdout)
                 self.assertFalse(destination.exists())
                 wrong_codex_env = env.copy()

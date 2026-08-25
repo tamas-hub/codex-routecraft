@@ -2,7 +2,7 @@
 
 RouteCraftは、**Solを設計・統合・最終判断に残し、実装だけを必要に応じてLuna/Terraへ振り分け、過去に獲得した判断を次のCodexへ相続する**オーケストレーション・プラグインです。
 
-## RouteCraft Local Runtime 0.7.1
+## RouteCraft Local Runtime 0.7.2
 
 このrepositoryには、既存のMarkdown Decision Storeとは独立したローカル製品「RouteCraft Memory Local」も含まれます。
 
@@ -46,7 +46,7 @@ routecraft update --apply
 routecraft migrate local-db|decision-store|endpoint
 ```
 
-0.7.1は、0.7のGraph IR v1、fail-closed compiler、Evidence Gate、専用SQLite Graph State Store、hash-chain checkpoint、resume、Selective Retry、Verified Constraint、Policy Labを維持します。加えて、安全なReal Agent Benchmarkのcredential分離を証明できないnative Windowsでは、認証参照・credential複製・UAC/helper setup・artifact作成・model呼出しより前にfail closedします。deterministic benchmark、Graph observe、Doctor、Security validation、0.6 Single Node Fast PathはWindowsでも継続します。Real Agent runはmacOS、Linux、利用可能なWSL2または専用VMでmodel-free isolation preflightに合格した場合だけ許可します。既定modeは`observe`で、実証済みtask classだけをallowlistで`enforce`できます。Unified Collectorはschema v1〜v3を維持し、v4のprivacy-safe Graph／Benchmark／Security集計だけを追加します。prompt・会話・source／file本文・Memory／Decision本文・path・credential・raw node outputは送信しません。取得不能値はlocal／schema v4 evidenceでは`null`であり、0へ置換しません。legacy D1 schema v3の`benchmark_runs`はmetric列が`NOT NULL`のため、取得不能summaryはlegacy row自体を送らず、偽の0を作りません。`CONTROL_CENTER_ENABLED`が未設定またはfalseでもLocal Runtimeは単独で動きます。
+0.7.2は、0.7のGraph IR v1、fail-closed compiler、Evidence Gate、専用SQLite Graph State Store、hash-chain checkpoint、resume、Selective Retry、Verified Constraint、Policy Labを維持します。加えて、安全なReal Agent Benchmarkのcredential分離を証明できないnative Windowsでは、認証参照・credential複製・UAC/helper setup・artifact作成・model呼出しより前にfail closedします。deterministic benchmark、Graph observe、Doctor、Security validation、0.6 Single Node Fast PathはWindowsでも継続します。Real Agent runはmacOS、Linux、利用可能なWSL2または専用VMでmodel-free isolation preflightに合格した場合だけ許可します。既定modeは`observe`で、実証済みtask classだけをallowlistで`enforce`できます。Unified Collectorはschema v1〜v3を維持し、v4のprivacy-safe Graph／Benchmark／Security集計だけを追加します。prompt・会話・source／file本文・Memory／Decision本文・path・credential・raw node outputは送信しません。取得不能値はlocal／schema v4 evidenceでは`null`であり、0へ置換しません。legacy D1 schema v3の`benchmark_runs`はmetric列が`NOT NULL`のため、取得不能summaryはlegacy row自体を送らず、偽の0を作りません。`CONTROL_CENTER_ENABLED`が未設定またはfalseでもLocal Runtimeは単独で動きます。
 
 ### 製品境界とSource of Truth
 
@@ -143,7 +143,7 @@ Local Evaluation（opt-in）
 ## 導入
 
 ```sh
-codex plugin marketplace add tamas-hub/codex-routecraft --ref v0.7.1
+codex plugin marketplace add tamas-hub/codex-routecraft --ref v0.7.2
 codex plugin add codex-routecraft@routecraft
 ```
 

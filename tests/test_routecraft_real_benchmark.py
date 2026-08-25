@@ -98,11 +98,14 @@ class RealBenchmarkTests(unittest.TestCase):
             native = root / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai" / "codex-win32-x64" / "vendor" / "x86_64-pc-windows-msvc" / "bin" / "codex.exe"
             native.parent.mkdir(parents=True)
             native.write_bytes(b"trusted native")
+            host_path_type = type(native)
+            expected = str(native.resolve())
             with (
                 patch.object(benchmark.os, "name", "nt"),
+                patch.object(benchmark, "Path", host_path_type),
                 patch.object(benchmark.shutil, "which", side_effect=lambda value, **_kwargs: str(launcher) if value == "codex.cmd" else None),
             ):
-                self.assertEqual(benchmark.resolve_codex_bin("codex"), str(native.resolve()))
+                self.assertEqual(benchmark.resolve_codex_bin("codex"), expected)
 
     def test_native_windows_permission_profile_generation_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -227,7 +230,7 @@ class RealBenchmarkTests(unittest.TestCase):
             patch.object(
                 benchmark,
                 "_verify_routecraft_plugin_registration",
-                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.1"},
+                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.2"},
             ),
             patch.object(benchmark, "_verify_sandbox_profiles") as verify,
         ):
@@ -455,7 +458,7 @@ class RealBenchmarkTests(unittest.TestCase):
             patch.object(
                 benchmark,
                 "_verify_routecraft_plugin_registration",
-                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.1"},
+                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.2"},
             ),
             patch.object(benchmark, "_verify_sandbox_profiles"),
         ):

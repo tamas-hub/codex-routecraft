@@ -53,7 +53,7 @@ assert_official_origin() {
 
 if [ "$MODE" = 'plan' ]; then
   cat <<EOF
-RouteCraft Local Runtime 0.7.1 install plan
+RouteCraft Local Runtime 0.7.2 install plan
 repository: $OFFICIAL_REPOSITORY
 tag: $RELEASE_TAG
 expected_commit: $EXPECTED_COMMIT
@@ -161,7 +161,7 @@ python3 "$DEVICE" install apply --source-dir "$SOURCE_DIR" --expected-commit "$E
 trap - 0
 
 echo
-echo "RouteCraft 0.7.1 installed from $EXPECTED_COMMIT."
+echo "RouteCraft 0.7.2 installed from $EXPECTED_COMMIT."
 echo 'Close existing Codex tasks and start a fresh task before verification.'
 echo 'Private Decision Store and Control Center were not configured.'
 echo 'The local transaction id in the JSON output can be used with routecraft-device rollback.'

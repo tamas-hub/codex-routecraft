@@ -97,7 +97,7 @@ class RouteCraftLocalCliTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, version.returncode)
-        self.assertEqual("routecraft 0.7.1 (memory-local 1.0.0)", version.stdout.decode("utf-8").strip())
+        self.assertEqual("routecraft 0.7.2 (memory-local 1.0.0)", version.stdout.decode("utf-8").strip())
 
         for args in (
             ("--help",),
@@ -579,13 +579,18 @@ class RouteCraftLocalCliTests(unittest.TestCase):
         trusted = Path(self.base) / "trusted" / "codex.exe"
         trusted.parent.mkdir(parents=True)
         trusted.write_bytes(b"native")
+        host_path_type = type(trusted)
+        expected = str(trusted.resolve())
 
         def resolve(_name: str, *, path: str) -> str:
             self.assertNotIn(".", path.split(os.pathsep))
             return str(trusted)
 
-        with mock.patch.dict(os.environ, {"PATH": "." + os.pathsep + str(trusted.parent)}), mock.patch.object(LOCAL_CLI.os, "name", "nt"), mock.patch.object(LOCAL_CLI.shutil, "which", side_effect=resolve):
-            self.assertEqual(str(trusted.resolve()), LOCAL_CLI._resolve_codex_executable())
+        # Patching os.name changes pathlib.Path's process-wide factory on a
+        # POSIX runner.  Keep this module's filesystem operations pinned to
+        # the host concrete path class while exercising the Windows branch.
+        with mock.patch.dict(os.environ, {"PATH": "." + os.pathsep + str(trusted.parent)}), mock.patch.object(LOCAL_CLI.os, "name", "nt"), mock.patch.object(LOCAL_CLI, "Path", host_path_type), mock.patch.object(LOCAL_CLI.shutil, "which", side_effect=resolve):
+            self.assertEqual(expected, LOCAL_CLI._resolve_codex_executable())
 
 
 if __name__ == "__main__":
