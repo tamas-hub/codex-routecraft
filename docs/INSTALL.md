@@ -41,12 +41,14 @@ The bridge remains OFF until configured, never auto-registers a repository, and 
 - GPT-5.6 Sol for the primary session
 - Luna/Terra access only when cross-model delegation is desired
 
-## Install from GitHub
+## Install from the audited GitHub tag
 
 ```sh
-codex plugin marketplace add tamas-hub/codex-routecraft --ref main
+codex plugin marketplace add tamas-hub/codex-routecraft --ref v0.7.1
 codex plugin add codex-routecraft@routecraft
 ```
+
+Do not use mutable `main` for a production or second-device install. Prefer the platform starter ZIP and verify its SHA-256 before running its read-only plan and confirmed local transaction. The starter package contains no Codex credentials, Decision Store, Memory Local database, Graph State, or Control Center data.
 
 Install bundled custom-agent profiles.
 
@@ -72,14 +74,18 @@ Start a fresh Codex task after installation.
 macOS / Linux:
 
 ```sh
-sh scripts/setup-local.sh
+sh scripts/setup-local.sh --plan
+sh scripts/setup-local.sh --apply --confirm INSTALL
 ```
 
 Windows PowerShell:
 
 ```powershell
-& .\scripts\setup-local.ps1
+& .\scripts\setup-local.ps1 -Mode Plan
+& .\scripts\setup-local.ps1 -Mode Apply -Confirm INSTALL
 ```
+
+Planはread-onlyのRepository verificationまでを行い、Plugin、marketplace、cache、Agents、local configを変更しません。ApplyはUnified Pluginと6 Agentsをlocal transactionとして更新し、出力された`transaction_id`から明示rollbackできます。Decision Store、Memory Local、Control Center、認証情報はこの手順では変更しません。
 
 ## Create a private decision store
 

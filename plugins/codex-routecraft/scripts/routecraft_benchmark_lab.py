@@ -8,7 +8,9 @@ or is supplied through the ``observed`` argument.
 
 The first version exposed :func:`load_fixture` and :func:`compare` with
 ``baseline_score``/``candidate_score`` fields. Those keys remain part of the
-compatibility surface; the richer side-by-side scorecard is additive.
+compatibility surface; the richer side-by-side scorecard is additive. Missing
+measurements are represented by JSON ``null``; only an explicitly supplied
+numeric zero is represented by ``0``.
 """
 from __future__ import annotations
 
@@ -44,7 +46,7 @@ def _now() -> str:
 
 
 def _number(value: object, *, integer: bool = False) -> int | float:
-    """Return a bounded finite non-negative scalar for aggregate metrics."""
+    """Return a bounded finite non-negative scalar for internal calculations."""
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -68,6 +70,36 @@ def _rate(value: object) -> float:
     return round(min(1.0, max(0.0, result)), 6)
 
 
+def _metric_number(value: object, *, integer: bool = False) -> int | float | None:
+    """Normalize an available metric without inventing a zero for missing data.
+
+    ``None`` and invalid/non-finite/negative values mean that no usable
+    observation is available.  An explicit numeric zero remains zero.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    if integer:
+        return max(0, int(round(number)))
+    return round(number, 6)
+
+
+def _metric_rate(value: object) -> float | None:
+    """Normalize an available rate to [0, 1], preserving unavailable values."""
+    number = _metric_number(value)
+    if number is None:
+        return None
+    result = float(number)
+    if result > 1:
+        result /= 100.0
+    return round(min(1.0, result), 6)
+
+
 def _safe_label(value: object, default: str) -> str:
     label = str(value or default).strip()
     return label if SAFE_LABEL.fullmatch(label) else default
@@ -84,11 +116,26 @@ def _side_value(side: Mapping[str, Any] | None, key: str, default: object = None
     return default
 
 
-def _normalize_metrics(side: Mapping[str, Any] | None, fallback: Mapping[str, Any] | None = None) -> dict[str, int | float]:
+_MISSING = object()
+
+
+def _metric_input(side: Mapping[str, Any], aliases: tuple[str, ...]) -> tuple[bool, object]:
+    """Return the first explicitly present alias, including an explicit null."""
+    for alias in aliases:
+        value = _side_value(side, alias, _MISSING)
+        if value is not _MISSING:
+            return True, value
+    return False, None
+
+
+def _normalize_metrics(
+    side: Mapping[str, Any] | None,
+    fallback: Mapping[str, Any] | None = None,
+) -> dict[str, int | float | None]:
     """Normalize one side while retaining every required scorecard metric."""
     source = side if isinstance(side, Mapping) else {}
     fallback = fallback if isinstance(fallback, Mapping) else {}
-    result: dict[str, int | float] = {}
+    result: dict[str, int | float | None] = {}
     aliases = {
         "task_success_rate": ("task_success_rate", "success_rate", "task_success"),
         "test_pass_rate": ("test_pass_rate", "tests_pass_rate", "test_pass"),
@@ -101,14 +148,18 @@ def _normalize_metrics(side: Mapping[str, Any] | None, fallback: Mapping[str, An
         "sample_count": ("sample_count", "cases", "case_count", "samples"),
     }
     for field in METRIC_FIELDS:
-        value: object = None
-        for alias in aliases[field]:
-            value = _side_value(source, alias, None)
-            if value is None:
-                value = _side_value(fallback, alias, None)
-            if value is not None:
-                break
-        result[field] = _rate(value) if field in RATE_FIELDS else _count(value) if field != "quality_score" else round(float(_number(value)), 6)
+        present, value = _metric_input(source, aliases[field])
+        if not present:
+            present, value = _metric_input(fallback, aliases[field])
+        if not present:
+            value = None
+        result[field] = (
+            _metric_rate(value)
+            if field in RATE_FIELDS
+            else _metric_number(value, integer=True)
+            if field != "quality_score"
+            else _metric_number(value)
+        )
     return result
 
 
@@ -131,10 +182,17 @@ def _side(raw: Mapping[str, Any] | None, *, default_label: str, fallback: Mappin
     if str(side.get("measurement_mode", side.get("measurement", ""))).strip().lower() == "counterfactual":
         measured = False
         mode = "counterfactual"
+    metric_status = {
+        field: "unavailable" if value is None else "measured" if measured else "estimated"
+        for field, value in metrics.items()
+    }
     return {
         "label": _safe_label(side.get("label", side.get("policy", side.get("mode"))), default_label),
         "measured": measured,
         "measurement_mode": mode,
+        "metric_status": metric_status,
+        "estimated_metrics": [field for field in METRIC_FIELDS if metric_status[field] == "estimated"],
+        "unavailable_metrics": [field for field in METRIC_FIELDS if metric_status[field] == "unavailable"],
         "metrics": metrics,
         **metrics,
     }
@@ -157,10 +215,13 @@ def _recommendation(current: Mapping[str, Any], candidate: Mapping[str, Any]) ->
         return {"winner": None, "confidence": None, "basis": "insufficient_measured_inputs"}
     current_metrics = current["metrics"]
     candidate_metrics = candidate["metrics"]
-    current_score = float(current_metrics.get("quality_score", 0))
-    candidate_score = float(candidate_metrics.get("quality_score", 0))
-    current_vector = (current_score, float(current_metrics.get("task_success_rate", 0)), float(current_metrics.get("test_pass_rate", 0)))
-    candidate_vector = (candidate_score, float(candidate_metrics.get("task_success_rate", 0)), float(candidate_metrics.get("test_pass_rate", 0)))
+    comparison_fields = ("quality_score", "task_success_rate", "test_pass_rate")
+    if any(current_metrics.get(field) is None or candidate_metrics.get(field) is None for field in comparison_fields):
+        return {"winner": None, "confidence": None, "basis": "insufficient_metric_inputs"}
+    current_score = float(current_metrics["quality_score"])
+    candidate_score = float(candidate_metrics["quality_score"])
+    current_vector = (current_score, float(current_metrics["task_success_rate"]), float(current_metrics["test_pass_rate"]))
+    candidate_vector = (candidate_score, float(candidate_metrics["task_success_rate"]), float(candidate_metrics["test_pass_rate"]))
     if candidate_vector == current_vector:
         return {"winner": "tie", "confidence": 0.0, "basis": "measured"}
     winner = candidate if candidate_vector > current_vector else current
@@ -192,34 +253,34 @@ def compare(fixture: Mapping[str, Any], observed: Mapping[str, Any] | None = Non
     current = _side(
         baseline_raw if isinstance(baseline_raw, Mapping) else {},
         default_label=_safe_label(fixture.get("current_label", fixture.get("baseline_label")), DEFAULT_LABELS["current"]),
+        observed=observed_current is not None or baseline_measured,
     )
-    if baseline_measured and not current["measured"]:
-        current["measured"] = True
-        current["measurement_mode"] = "measured"
     candidate = _side(
         candidate_raw,
         default_label=_safe_label(fixture.get("candidate_label", fixture.get("new_policy_label")), DEFAULT_LABELS["candidate"]),
         observed=observed_input,
     )
-    if observed_input and str(candidate_raw.get("measurement_mode", candidate_raw.get("measurement", ""))).lower() != "counterfactual":
-        candidate["measured"] = True
-        candidate["measurement_mode"] = "measured"
     recommendation = _recommendation(current, candidate)
     fixture_id = str(fixture.get("fixture_id", "fixture"))
-    current_score = float(current["metrics"].get("quality_score", 0))
-    candidate_score = float(candidate["metrics"].get("quality_score", 0))
+    current_score = current["metrics"].get("quality_score")
+    candidate_score = candidate["metrics"].get("quality_score")
     measurement = "measured" if current["measured"] and candidate["measured"] else "counterfactual"
+    candidate_sample_count = candidate["metrics"].get("sample_count")
+    current_sample_count = current["metrics"].get("sample_count")
+    case_count = candidate_sample_count if candidate_sample_count is not None else current_sample_count
     return {
         "schema_version": SCHEMA_VERSION,
         "id": hashlib.sha256(("benchmark:" + fixture_id).encode("utf-8")).hexdigest()[:32],
         "timestamp": _now(),
         "measurement": measurement,
         "measurement_mode": measurement,
-        "measured": bool(candidate["measured"]),
-        "case_count": _count(candidate["metrics"].get("sample_count", current["metrics"].get("sample_count"))),
-        "baseline_score": _count(current_score),
-        "candidate_score": _count(candidate_score),
-        "score_delta": round(candidate_score - current_score, 6),
+        "measured": measurement == "measured",
+        "case_count": case_count,
+        "baseline_score": current_score,
+        "candidate_score": candidate_score,
+        "score_delta": round(float(candidate_score) - float(current_score), 6)
+        if candidate_score is not None and current_score is not None
+        else None,
         "current": current,
         "candidate": candidate,
         "sides": {"current": current, "candidate": candidate},
@@ -228,11 +289,19 @@ def compare(fixture: Mapping[str, Any], observed: Mapping[str, Any] | None = Non
     }
 
 
-def _percent_integer(value: object) -> int:
-    number = float(_number(value))
+def _percent_integer(value: object) -> int | None:
+    normalized = _metric_number(value)
+    if normalized is None:
+        return None
+    number = float(normalized)
     if number <= 1:
         number *= 100
     return min(100, max(0, int(round(number))))
+
+
+def _summary_count(value: object) -> int | None:
+    normalized = _metric_number(value, integer=True)
+    return int(normalized) if normalized is not None else None
 
 
 def _confidence_level(value: object) -> str:
@@ -250,7 +319,11 @@ def to_d1_summary(
     timestamp: str | None = None,
     comparison_kind: str = "routing",
 ) -> dict[str, object]:
-    """Return one exact, aggregate-only schema-v3 ``benchmark_runs`` row."""
+    """Return one aggregate-only schema-v3 ``benchmark_runs`` row.
+
+    Nullable metric columns remain null when the local result has no usable
+    observation; this preserves the difference between unavailable and zero.
+    """
     if not isinstance(result, Mapping):
         raise TypeError("result must be a mapping")
     current = result.get("current") if isinstance(result.get("current"), Mapping) else {}
@@ -286,14 +359,14 @@ def to_d1_summary(
         "candidate_success_rate": _percent_integer(candidate_metrics.get("task_success_rate")),
         "current_quality": _percent_integer(current_metrics.get("quality_score")),
         "candidate_quality": _percent_integer(candidate_metrics.get("quality_score")),
-        "current_tokens": _count(current_metrics.get("tokens")),
-        "candidate_tokens": _count(candidate_metrics.get("tokens")),
-        "current_duration_ms": _count(current_metrics.get("duration_ms")),
-        "candidate_duration_ms": _count(candidate_metrics.get("duration_ms")),
+        "current_tokens": _summary_count(current_metrics.get("tokens")),
+        "candidate_tokens": _summary_count(candidate_metrics.get("tokens")),
+        "current_duration_ms": _summary_count(current_metrics.get("duration_ms")),
+        "candidate_duration_ms": _summary_count(candidate_metrics.get("duration_ms")),
         "current_test_pass_rate": _percent_integer(current_metrics.get("test_pass_rate")),
         "candidate_test_pass_rate": _percent_integer(candidate_metrics.get("test_pass_rate")),
-        "current_rework": _count(current_metrics.get("rework")),
-        "candidate_rework": _count(candidate_metrics.get("rework")),
+        "current_rework": _summary_count(current_metrics.get("rework")),
+        "candidate_rework": _summary_count(candidate_metrics.get("rework")),
         "winner": winner,
         "confidence": _confidence_level(recommendation.get("confidence")) if measured else "low",
     }

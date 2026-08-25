@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import py_compile
 import re
 import sys
 from pathlib import Path
@@ -22,8 +21,8 @@ LOCAL_PACKAGE = PLUGIN / "scripts" / "routecraft_local"
 LOCAL_VERSION_FILE = ROOT / "release" / "VERSION"
 LOCAL_VERSION = "1.0.0"
 
-EXPECTED_VERSION = "0.7.0"
-EXPECTED_VERSION_PATTERN = re.compile(r"^0\.7\.0\+codex\.[a-z0-9][a-z0-9-]*$")
+EXPECTED_VERSION = "0.7.1"
+EXPECTED_VERSION_PATTERN = re.compile(r"^0\.7\.1\+codex\.[a-z0-9][a-z0-9-]*$")
 EXPECTED_AGENTS = {
     "routecraft_luna_low.toml": ("routecraft_luna_low", "gpt-5.6-luna", "low"),
     "routecraft_luna_medium.toml": ("routecraft_luna_medium", "gpt-5.6-luna", "medium"),
@@ -334,8 +333,9 @@ for path in python_files:
     if not path.is_file():
         continue
     try:
-        py_compile.compile(str(path), doraise=True)
-    except py_compile.PyCompileError as exc:
+        source = path.read_text(encoding="utf-8")
+        compile(source, str(path), "exec", dont_inherit=True)
+    except (OSError, UnicodeError, SyntaxError) as exc:
         fail(f"{path.relative_to(ROOT)} compilation failed: {exc}")
 
 implementation = "\n".join(path.read_text(encoding="utf-8") for path in memory_python_files if path.is_file())

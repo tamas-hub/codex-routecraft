@@ -74,6 +74,18 @@ class ControlCenterRuntimeTests(unittest.TestCase):
             "observed_at": "2026-08-24T00:00:01Z",
         }
 
+    @staticmethod
+    def measured_benchmark() -> dict[str, object]:
+        row = COLLECTOR.benchmark_summary("a" * 32, "2026-08-24T00:00:00Z")
+        row.update({"status": "passed", "measured": True, "winner": "tie"})
+        for key in (
+            "current_success_rate", "candidate_success_rate", "current_quality", "candidate_quality",
+            "current_tokens", "candidate_tokens", "current_duration_ms", "candidate_duration_ms",
+            "current_test_pass_rate", "candidate_test_pass_rate", "current_rework", "candidate_rework",
+        ):
+            row[key] = 0
+        return row
+
     def test_core_collector_has_no_control_center_import_and_disabled_is_supported(self) -> None:
         text = (SCRIPTS / "routecraft_collector.py").read_text(encoding="utf-8")
         self.assertNotIn("import routecraft_control_center", text)
@@ -227,9 +239,35 @@ class ControlCenterRuntimeTests(unittest.TestCase):
 
     def test_validation_rejects_non_boolean_benchmark_measurement_and_unknown_keys(self) -> None:
         payload = COLLECTOR.fixture_payload()
+        payload["benchmark_runs"] = [self.measured_benchmark()]
         self.assertTrue(COLLECTOR.validate_v3(payload))
         payload["benchmark_runs"][0]["measured"] = 1
         self.assertFalse(COLLECTOR.validate_v3(payload))
+
+    def test_unavailable_benchmark_metrics_are_nullable_but_not_measured_zero(self) -> None:
+        payload = COLLECTOR.fixture_payload()
+        row = COLLECTOR.benchmark_summary("a" * 32, "2026-08-24T00:00:00Z")
+        metric_keys = (
+            "current_success_rate", "candidate_success_rate", "current_quality", "candidate_quality",
+            "current_tokens", "candidate_tokens", "current_duration_ms", "candidate_duration_ms",
+            "current_test_pass_rate", "candidate_test_pass_rate", "current_rework", "candidate_rework",
+        )
+        self.assertTrue(COLLECTOR.validate_v3(payload))
+        self.assertEqual([], payload["benchmark_runs"])
+        self.assertTrue(all(row[key] is None for key in metric_keys))
+        self.assertEqual([], COLLECTOR._benchmark_transport_rows(row))
+
+    def test_benchmark_evidence_status_and_nullable_metrics_fail_closed(self) -> None:
+        payload = COLLECTOR.fixture_payload()
+        row = COLLECTOR.benchmark_summary("a" * 32, "2026-08-24T00:00:00Z")
+        payload["benchmark_runs"] = [row]
+        self.assertFalse(COLLECTOR.validate_v3(payload))
+
+        measured = COLLECTOR.fixture_payload()
+        measured_row = self.measured_benchmark()
+        measured["benchmark_runs"] = [measured_row]
+        self.assertTrue(COLLECTOR.validate_v3(measured), "an explicitly measured zero remains zero")
+        self.assertEqual([measured_row], COLLECTOR._benchmark_transport_rows(measured_row))
 
     def test_v4_fixture_is_additive_and_exact_without_weakening_v3(self) -> None:
         v3 = COLLECTOR.fixture_payload()
@@ -245,6 +283,7 @@ class ControlCenterRuntimeTests(unittest.TestCase):
         v4["graph_runs"] = [{"prompt": "private"}]
         self.assertFalse(COLLECTOR.validate_v4(v4))
         payload = COLLECTOR.fixture_payload()
+        payload["benchmark_runs"] = [self.measured_benchmark()]
         payload["benchmark_runs"][0]["extra"] = "no"
         self.assertFalse(COLLECTOR.validate_v3(payload))
 
@@ -307,7 +346,7 @@ class ControlCenterRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             home = root / "codex"
-            benchmark = COLLECTOR.fixture_payload()["benchmark_runs"][0]
+            benchmark = self.measured_benchmark()
             benchmark.update({"measured": True, "status": "passed", "current_label": "Old routing", "candidate_label": "RouteCraft + Memory"})
             security = COLLECTOR.fixture_payload()["security_scans"][0]
             security["status"] = "clean"
@@ -326,7 +365,7 @@ class ControlCenterRuntimeTests(unittest.TestCase):
     def test_system_status_maps_benchmark_and_security_independently(self) -> None:
         payload = COLLECTOR.fixture_payload()
         device = payload["device_health"][0]
-        benchmark = payload["benchmark_runs"][0]
+        benchmark = COLLECTOR.benchmark_summary(device["device_id"], device["observed_at"])
         security = payload["security_scans"][0]
         benchmark.update({"status": "partial", "measured": False})
         security["status"] = "findings"

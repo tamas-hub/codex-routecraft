@@ -183,9 +183,9 @@ def _git_state(root: Path) -> tuple[bool, int, int, int]:
 def _plugin_version(source_root: Path) -> str:
     try:
         manifest = json.loads((source_root / "plugins" / "codex-routecraft" / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        return _label(manifest.get("version"), "0.7.0")
+        return _label(manifest.get("version"), "0.7.1")
     except (OSError, ValueError, json.JSONDecodeError):
-        return "0.7.0"
+        return "0.7.1"
 
 
 def _file_digest(path: Path) -> str | None:
@@ -277,7 +277,7 @@ def _run_app_server(command: list[str]) -> Mapping[str, object]:
                 return payload["result"]
 
     try:
-        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.7.0"}}})
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.7.1"}}})
         receive(1)
         send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         send({"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}})
@@ -661,7 +661,10 @@ def benchmark_summary(device_id: str | Path, observed_at: str | None = None, res
         adapted = _summary_row(result_file, "benchmark_runs", device_id, observed_at)
         if adapted is not None:
             return adapted
-    return {"benchmark_run_id": _family_id("benchmark", device_id, observed_at), "device_id": device_id, "observed_at": observed_at, "comparison_kind": "routing", "status": "unavailable", "measured": False, "current_label": "current", "candidate_label": "candidate", "current_success_rate": 0, "candidate_success_rate": 0, "current_quality": 0, "candidate_quality": 0, "current_tokens": 0, "candidate_tokens": 0, "current_duration_ms": 0, "candidate_duration_ms": 0, "current_test_pass_rate": 0, "candidate_test_pass_rate": 0, "current_rework": 0, "candidate_rework": 0, "winner": "inconclusive", "confidence": "low"}
+    # An unavailable observation is not a measured zero.  The v3/v4 transport
+    # keeps the existing row shape and uses nullable metric columns so older
+    # history remains compatible without inventing benchmark evidence.
+    return {"benchmark_run_id": _family_id("benchmark", device_id, observed_at), "device_id": device_id, "observed_at": observed_at, "comparison_kind": "routing", "status": "unavailable", "measured": False, "current_label": "current", "candidate_label": "candidate", "current_success_rate": None, "candidate_success_rate": None, "current_quality": None, "candidate_quality": None, "current_tokens": None, "candidate_tokens": None, "current_duration_ms": None, "candidate_duration_ms": None, "current_test_pass_rate": None, "candidate_test_pass_rate": None, "current_rework": None, "candidate_rework": None, "winner": "inconclusive", "confidence": "low"}
 
 
 def security_summary(device_id: str | Path, observed_at: str | None = None, result_file: Path | None = None) -> dict[str, object]:
@@ -854,6 +857,9 @@ def _valid_family(name: str, row: Mapping[str, object]) -> bool:
     if name == "benchmark_runs":
         percentages = ("current_success_rate", "candidate_success_rate", "current_quality", "candidate_quality", "current_test_pass_rate", "candidate_test_pass_rate")
         counts = ("current_tokens", "candidate_tokens", "current_duration_ms", "candidate_duration_ms", "current_rework", "candidate_rework")
+        # The legacy v3 D1 columns are NOT NULL. Never coerce unavailable local
+        # values to zero merely to satisfy that physical schema: the collector
+        # omits an unavailable row instead (see _benchmark_transport_rows).
         return row["comparison_kind"] in _BENCHMARK_KIND and row["status"] in _BENCHMARK_STATUS and isinstance(row["measured"], bool) and _valid_label(row["current_label"]) and _valid_label(row["candidate_label"]) and all(_valid_percent(row[key]) for key in percentages) and all(_valid_count(row[key]) for key in counts) and row["winner"] in _WINNER and row["confidence"] in _CONFIDENCE
     if name == "security_scans":
         counts = ("critical_count", "high_count", "medium_count", "low_count", "info_count", "new_count", "resolved_count")
@@ -1036,6 +1042,16 @@ def _safe(factory: Callable[[], dict[str, object]], fallback: Callable[[], dict[
         return fallback()
 
 
+def _benchmark_transport_rows(summary: Mapping[str, object]) -> list[dict[str, object]]:
+    """Adapt local null semantics to the immutable legacy D1 contract.
+
+    A missing measurement is represented locally by null. Because the v3 D1
+    table cannot store null metrics, absence is transported as an empty family
+    rather than a fabricated all-zero observation.
+    """
+    return [dict(summary)] if _valid_family("benchmark_runs", summary) else []
+
+
 def collect_v3(*, source_root: Path | None = None, data_dir: str | None = None, sessions_dir: Path | None = None, codex_home: Path | None = None, since_days: int | None = 30, benchmark_result: Path | None = None) -> dict[str, object]:
     observed_at = utc_now()
     home = codex_home or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
@@ -1072,12 +1088,12 @@ def collect_v3(*, source_root: Path | None = None, data_dir: str | None = None, 
         ),
         lambda: system_status(unavailable_device_health(device_id, observed_at), [], False, benchmark_summary(device_id, observed_at), security_summary(device_id, observed_at), device_id, observed_at),
     )
-    payload: dict[str, object] = {"schema_version": V3_SCHEMA_VERSION, "runs": runs, "memory_tasks": memory_tasks, "device_health": [device], "memory_metrics": [memory] if memory else [], "usage_snapshots": usage, "benchmark_runs": [benchmark], "security_scans": [security], "system_status": [status]}
+    payload: dict[str, object] = {"schema_version": V3_SCHEMA_VERSION, "runs": runs, "memory_tasks": memory_tasks, "device_health": [device], "memory_metrics": [memory] if memory else [], "usage_snapshots": usage, "benchmark_runs": _benchmark_transport_rows(benchmark), "security_scans": [security], "system_status": [status]}
     if not validate_v3(payload):
         device = unavailable_device_health(device_id, observed_at)
         benchmark = benchmark_summary(device_id, observed_at)
         security = security_summary(device_id, observed_at)
-        payload = {"schema_version": V3_SCHEMA_VERSION, "runs": [], "memory_tasks": [], "device_health": [device], "memory_metrics": [], "usage_snapshots": [], "benchmark_runs": [benchmark], "security_scans": [security], "system_status": [system_status(device, [], False, benchmark, security, device_id, observed_at)]}
+        payload = {"schema_version": V3_SCHEMA_VERSION, "runs": [], "memory_tasks": [], "device_health": [device], "memory_metrics": [], "usage_snapshots": [], "benchmark_runs": [], "security_scans": [security], "system_status": [system_status(device, [], False, benchmark, security, device_id, observed_at)]}
     return payload
 
 
@@ -1298,7 +1314,7 @@ def fixture_payload() -> dict[str, object]:
     device = unavailable_device_health(device_id, observed_at)
     benchmark = benchmark_summary(device_id, observed_at)
     security = security_summary(device_id, observed_at)
-    return {"schema_version": V3_SCHEMA_VERSION, "runs": [], "memory_tasks": [], "device_health": [device], "memory_metrics": [], "usage_snapshots": [], "benchmark_runs": [benchmark], "security_scans": [security], "system_status": [system_status(device, [], False, benchmark, security, device_id, observed_at)]}
+    return {"schema_version": V3_SCHEMA_VERSION, "runs": [], "memory_tasks": [], "device_health": [device], "memory_metrics": [], "usage_snapshots": [], "benchmark_runs": [], "security_scans": [security], "system_status": [system_status(device, [], False, benchmark, security, device_id, observed_at)]}
 
 
 def fixture_payload_v4() -> dict[str, object]:

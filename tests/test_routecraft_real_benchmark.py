@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,23 +88,46 @@ class RealBenchmarkTests(unittest.TestCase):
         self.assertNotIn("workspace-write", off)
         self.assertIn("--strict-config", off)
         self.assertNotIn("--yolo", off)
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", off)
 
-    def test_codex_binary_resolution_prefers_the_windows_cmd_launcher(self) -> None:
-        host_path_type = type(Path.cwd())
-        expected = str(host_path_type("C:/Codex/codex.cmd").resolve())
-        with (
-            patch.object(benchmark.os, "name", "nt"),
-            patch.object(benchmark, "Path", host_path_type),
-            patch.object(benchmark.shutil, "which", side_effect=lambda value: "C:/Codex/codex.cmd" if value == "codex.cmd" else None),
-        ):
-            self.assertEqual(benchmark.resolve_codex_bin("codex"), expected)
+    def test_codex_binary_resolution_uses_packaged_native_not_mutable_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            launcher = root / "codex.cmd"
+            launcher.write_text("untrusted launcher", encoding="utf-8")
+            native = root / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai" / "codex-win32-x64" / "vendor" / "x86_64-pc-windows-msvc" / "bin" / "codex.exe"
+            native.parent.mkdir(parents=True)
+            native.write_bytes(b"trusted native")
+            with (
+                patch.object(benchmark.os, "name", "nt"),
+                patch.object(benchmark.shutil, "which", side_effect=lambda value, **_kwargs: str(launcher) if value == "codex.cmd" else None),
+            ):
+                self.assertEqual(benchmark.resolve_codex_bin("codex"), str(native.resolve()))
 
-    def test_windows_permission_profiles_require_elevated_backend(self) -> None:
+    def test_native_windows_permission_profile_generation_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for name in ("workspace", "evaluation", "harness", "broker"):
                 (root / name).mkdir()
-            with patch.object(benchmark.os, "name", "nt"), patch.object(benchmark, "Path", type(root)):
+            with (
+                patch.object(benchmark, "_is_native_windows", return_value=True),
+                self.assertRaises(benchmark.NativeWindowsBrokerUnsupported) as raised,
+            ):
+                benchmark._permission_profile_config(
+                    broker_home=root / "broker",
+                    workspace=root / "workspace",
+                    evaluation_dir=root / "evaluation",
+                    harness=root / "harness",
+                    codex_bin=sys.executable,
+                )
+        self.assertEqual(raised.exception.code, benchmark.NATIVE_WINDOWS_BROKER_ERROR_CODE)
+
+    def test_posix_permission_profiles_use_canonical_deny(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("workspace", "evaluation", "harness", "broker"):
+                (root / name).mkdir()
+            with patch.object(benchmark, "_is_native_windows", return_value=False):
                 config = benchmark._permission_profile_config(
                     broker_home=root / "broker",
                     workspace=root / "workspace",
@@ -111,20 +135,99 @@ class RealBenchmarkTests(unittest.TestCase):
                     harness=root / "harness",
                     codex_bin=sys.executable,
                 )
-        self.assertIn('[windows]\nsandbox = "elevated"', config)
         self.assertIn('[permissions.benchmark-solver.filesystem]', config)
         self.assertIn('[permissions.benchmark-acceptance.filesystem]', config)
         self.assertIn('[marketplaces.routecraft]', config)
+        broker_rule = f'{json.dumps(str((root / "broker").resolve()))} = "deny"'
+        self.assertEqual(config.count(broker_rule), 2)
+        harness_rule = f'{json.dumps(str((root / "harness").resolve()))} = "deny"'
+        self.assertEqual(config.count(harness_rule), 2)
+        self.assertNotIn('[windows]', config)
+
+    def test_native_windows_preflight_stops_before_auth_copy_uac_or_model(self) -> None:
+        output = io.StringIO()
+        errors = io.StringIO()
+        with (
+            patch.object(benchmark, "_is_native_windows", return_value=True),
+            patch.object(benchmark, "resolve_codex_bin") as resolve,
+            patch.object(benchmark, "_isolated_codex_home") as isolated,
+            patch.object(benchmark.shutil, "copyfile") as copyfile,
+            patch.object(benchmark.subprocess, "run") as process,
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+        ):
+            code = benchmark.main(["preflight"])
+        self.assertEqual(code, 2)
+        resolve.assert_not_called()
+        isolated.assert_not_called()
+        copyfile.assert_not_called()
+        process.assert_not_called()
+        self.assertEqual(output.getvalue(), "")
+        diagnostic = json.loads(errors.getvalue())
+        self.assertEqual(diagnostic["code"], benchmark.NATIVE_WINDOWS_BROKER_ERROR_CODE)
+        self.assertIn("Codex CLI 0.148.0", diagnostic["message"])
+        self.assertIn("WSL2", diagnostic["message"])
+        self.assertFalse(diagnostic["model_invoked"])
+
+    def test_native_windows_run_one_stops_before_fixture_or_subprocess(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(benchmark, "_is_native_windows", return_value=True),
+            patch.object(benchmark, "_start_routecraft_condition") as condition,
+            patch.object(benchmark, "materialize_case") as materialize,
+            patch.object(benchmark, "_isolated_codex_home") as isolated,
+            patch.object(benchmark.subprocess, "run") as process,
+            self.assertRaises(benchmark.NativeWindowsBrokerUnsupported),
+        ):
+            benchmark.run_one(
+                self.suite["cases"][0], "A", output_dir=Path(temporary),
+                codex_bin="codex", model="gpt-5.6-luna",
+                reasoning_effort="medium", timeout_seconds=5,
+            )
+        condition.assert_not_called()
+        materialize.assert_not_called()
+        isolated.assert_not_called()
+        process.assert_not_called()
+
+    def test_native_windows_run_command_stops_before_artifact_creation_or_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary) / "must-not-exist"
+            output = io.StringIO()
+            errors = io.StringIO()
+            with (
+                patch.object(benchmark, "_is_native_windows", return_value=True),
+                patch.object(benchmark, "resolve_codex_bin") as resolve,
+                patch.object(benchmark, "_authorize_executable_suite") as authorize,
+                patch.object(benchmark, "run_one") as run_one,
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(errors),
+            ):
+                code = benchmark.main([
+                    "run", "--case", str(self.suite["cases"][0]["id"]),
+                    "--mode", "A", "--output-dir", str(output_dir),
+                    "--confirm-token-guard", "POST_RUN_ACCOUNTING_ONLY",
+                ])
+            self.assertEqual(2, code)
+            self.assertFalse(output_dir.exists())
+            resolve.assert_not_called()
+            authorize.assert_not_called()
+            run_one.assert_not_called()
+            self.assertEqual("", output.getvalue())
+            diagnostic = json.loads(errors.getvalue())
+            self.assertEqual(benchmark.NATIVE_WINDOWS_BROKER_ERROR_CODE, diagnostic["code"])
+            self.assertFalse(diagnostic["model_invoked"])
 
     def test_model_free_preflight_reports_only_proven_boundaries(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary,
+            patch.object(benchmark, "_is_native_windows", return_value=False),
             patch.object(benchmark, "resolve_codex_bin", return_value="codex"),
+            patch.object(benchmark, "_is_native_windows", return_value=False),
             patch.object(benchmark, "_isolated_codex_home", return_value=contextlib.nullcontext(Path(temporary) / "broker")),
             patch.object(
                 benchmark,
                 "_verify_routecraft_plugin_registration",
-                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.0"},
+                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.1"},
             ),
             patch.object(benchmark, "_verify_sandbox_profiles") as verify,
         ):
@@ -133,6 +236,89 @@ class RealBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertFalse(result["model_invoked"])
         self.assertFalse(result["private_home_readable"])
+
+    def test_preflight_failure_withholds_private_paths_and_raw_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            harness = root / "acceptance-harness"
+            broker = root / "broker"
+            private = root / "private-user" / ".codex" / "auth.json"
+            for directory in (workspace, harness, broker, private.parent):
+                directory.mkdir(parents=True, exist_ok=True)
+            leaked_stderr = f"launcher failed near {private} with raw diagnostic"
+            with (
+                patch.object(benchmark, "_model_process_tree", return_value=(91, f"required-read-denied,{private}", leaked_stderr, False)),
+                self.assertRaises(benchmark.BenchmarkError) as raised,
+            ):
+                benchmark._verify_sandbox_profiles(
+                    codex_bin="codex",
+                    broker_home=broker,
+                    workspace=workspace,
+                    harness=harness,
+                    private_sentinel=private,
+                    environment={},
+                )
+        message = str(raised.exception)
+        self.assertIn(benchmark.PREFLIGHT_ISOLATION_ERROR_CODE, message)
+        self.assertIn("required-read-denied", message)
+        self.assertIn("raw child output withheld", message)
+        self.assertNotIn(str(private), message)
+        self.assertNotIn("raw diagnostic", message)
+
+    def test_preflight_probes_solver_outer_and_acceptance_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            harness = root / "acceptance-harness"
+            broker = root / "broker"
+            private = root / "private" / "auth.json"
+            for directory in (workspace / ".git", harness, broker, private.parent):
+                directory.mkdir(parents=True, exist_ok=True)
+            (workspace / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+            with patch.object(benchmark, "_model_process_tree", return_value=(0, "ROUTECRAFT_SANDBOX_OK\n", "", False)) as process:
+                benchmark._verify_sandbox_profiles(
+                    codex_bin="codex", broker_home=broker, workspace=workspace,
+                    harness=harness, private_sentinel=private, environment={},
+                )
+        profiles = [call.args[0][3] for call in process.call_args_list]
+        self.assertEqual(profiles, ["benchmark-solver", "benchmark-outer", "benchmark-acceptance"])
+        self.assertFalse((harness / ".routecraft-boundary-probe").exists())
+
+    def test_isolated_posix_broker_never_copies_windows_sandbox_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_home = root / "source-codex-home"
+            workspace = root / "workspace"
+            evaluation = root / "evaluation"
+            harness = root / "harness"
+            for directory in (source_home, workspace, evaluation, harness):
+                directory.mkdir()
+            (source_home / "auth.json").write_text('{"test": true}', encoding="utf-8")
+            sandbox_secret = source_home / ".sandbox-secrets"
+            sandbox_secret.write_text("must-not-copy", encoding="utf-8")
+            real_copyfile = benchmark.shutil.copyfile
+            with (
+                patch.dict(benchmark.os.environ, {"CODEX_HOME": str(source_home)}, clear=False),
+                patch.object(benchmark, "_is_native_windows", return_value=False),
+                patch.object(benchmark, "_verify_codex_cli_identity", return_value=sys.executable),
+                patch.object(benchmark, "_install_isolated_routecraft_plugin"),
+                patch.object(benchmark.shutil, "copyfile", wraps=real_copyfile) as copyfile,
+                patch.object(
+                    benchmark.shutil,
+                    "copytree",
+                    side_effect=lambda _source, destination, **_kwargs: Path(destination).mkdir(parents=True),
+                ),
+            ):
+                with benchmark._isolated_codex_home(
+                    workspace=workspace,
+                    evaluation_dir=evaluation,
+                    harness=harness,
+                    codex_bin=sys.executable,
+                ) as broker_home:
+                    self.assertFalse((broker_home / ".sandbox-secrets").exists())
+            copied_sources = {Path(call.args[0]).resolve() for call in copyfile.call_args_list}
+            self.assertNotIn(sandbox_secret.resolve(), copied_sources)
 
     def test_graph_observe_condition_compiles_a_real_durable_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -159,6 +345,7 @@ class RealBenchmarkTests(unittest.TestCase):
         errors = io.StringIO()
         with (
             tempfile.TemporaryDirectory() as temporary,
+            patch.object(benchmark, "_is_native_windows", return_value=False),
             patch.object(benchmark, "resolve_codex_bin", return_value="codex"),
             patch.object(benchmark, "run_one") as run_one,
             contextlib.redirect_stdout(output),
@@ -183,6 +370,7 @@ class RealBenchmarkTests(unittest.TestCase):
         errors = io.StringIO()
         with (
             tempfile.TemporaryDirectory() as temporary,
+            patch.object(benchmark, "_is_native_windows", return_value=False),
             patch.object(benchmark, "resolve_codex_bin", return_value="codex"),
             patch.object(benchmark, "run_one") as run_one,
             contextlib.redirect_stdout(output),
@@ -238,6 +426,10 @@ class RealBenchmarkTests(unittest.TestCase):
                 return SimpleNamespace(returncode=0, stdout="metrics.py\n", stderr="")
             return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
+        def fake_model(command, *, cwd, environment, timeout_seconds):
+            captured.append((list(command), dict(environment)))
+            return 0, codex_stdout, "", False
+
         routecraft_state = {
             "enabled": True,
             "condition_pass": True,
@@ -252,7 +444,10 @@ class RealBenchmarkTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as temporary,
             patch.object(benchmark, "materialize_case", side_effect=materialize),
+            patch.object(benchmark, "_is_native_windows", return_value=False),
+            patch.object(benchmark, "_verify_codex_cli_identity", return_value="codex"),
             patch.object(benchmark.subprocess, "run", side_effect=fake_run),
+            patch.object(benchmark, "_model_process_tree", side_effect=fake_model),
             patch.object(benchmark, "_start_routecraft_condition", return_value=routecraft_state),
             patch.object(benchmark, "_finish_routecraft_condition"),
             patch.object(benchmark, "_evaluation_metrics", return_value=(None, 0)),
@@ -260,7 +455,7 @@ class RealBenchmarkTests(unittest.TestCase):
             patch.object(
                 benchmark,
                 "_verify_routecraft_plugin_registration",
-                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.0"},
+                return_value={"plugin_id": "codex-routecraft@routecraft", "registration_count": 1, "version": "0.7.1"},
             ),
             patch.object(benchmark, "_verify_sandbox_profiles"),
         ):
@@ -280,6 +475,26 @@ class RealBenchmarkTests(unittest.TestCase):
             self.assertTrue(result["routecraft_marker_pass"])
             self.assertEqual(result["lane_distribution"], {"luna": 1})
             self.assertTrue((Path(temporary) / "artifacts" / result["run_id"] / "codex.ndjson").is_file())
+
+    def test_model_timeout_terminates_the_posix_process_group(self) -> None:
+        process = mock.Mock(pid=4242, returncode=None)
+        process.communicate.side_effect = [
+            benchmark.subprocess.TimeoutExpired(["codex"], 1),
+            ("partial", "stopped"),
+        ]
+        with (
+            patch.object(benchmark.os, "name", "posix"),
+            patch.object(benchmark.subprocess, "Popen", return_value=process) as popen,
+            patch.object(benchmark.os, "killpg", create=True) as killpg,
+            patch.object(benchmark.signal, "SIGKILL", 9, create=True),
+        ):
+            result = benchmark._model_process_tree(
+                ["codex", "sandbox"], cwd=ROOT, environment={}, timeout_seconds=1
+            )
+        self.assertEqual((None, "partial", "stopped", True), result)
+        self.assertEqual(mock.call(4242, benchmark.signal.SIGTERM), killpg.call_args_list[0])
+        popen.assert_called_once()
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
 
     def test_readonly_recall_builds_an_in_memory_index_without_sync(self) -> None:
         entry = {
@@ -367,6 +582,16 @@ class RealBenchmarkTests(unittest.TestCase):
         self.assertEqual(total["mean_value"], 8.0)
         with self.assertRaises(benchmark.BenchmarkError):
             benchmark.to_d1_aggregate(summary, device_id="private-device-name")
+        sensitive_suite = json.loads(json.dumps(summary))
+        sensitive_suite["suite_id"] = "C:/Users/private/benchmark"
+        with self.assertRaises(benchmark.BenchmarkError):
+            benchmark.to_d1_aggregate(sensitive_suite, device_id="0123456789abcdef")
+        with self.assertRaises(benchmark.BenchmarkError):
+            benchmark.to_d1_aggregate(summary, device_id="0123456789abcdef", observed_at="2026-08-25T99:99:99Z")
+        impossible_rate = json.loads(json.dumps(summary))
+        impossible_rate["modes"]["A"]["metric_evidence"]["total_tokens"]["success_rate"] = 101
+        with self.assertRaises(benchmark.BenchmarkError):
+            benchmark.to_d1_aggregate(impossible_rate, device_id="0123456789abcdef")
 
     def test_invalid_routecraft_condition_cannot_be_aggregated_as_measured(self) -> None:
         records = [

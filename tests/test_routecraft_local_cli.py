@@ -97,7 +97,7 @@ class RouteCraftLocalCliTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, version.returncode)
-        self.assertEqual("routecraft 0.7.0 (memory-local 1.0.0)", version.stdout.decode("utf-8").strip())
+        self.assertEqual("routecraft 0.7.1 (memory-local 1.0.0)", version.stdout.decode("utf-8").strip())
 
         for args in (
             ("--help",),
@@ -320,6 +320,48 @@ class RouteCraftLocalCliTests(unittest.TestCase):
         result = json.loads(output.getvalue())["data"]
         self.assertEqual(expected, result)
 
+    def test_real_benchmark_preflight_maps_private_broker_failure_to_safe_cli_error(self) -> None:
+        import routecraft_real_benchmark as real_benchmark
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                real_benchmark,
+                "benchmark_sandbox_preflight",
+                side_effect=real_benchmark.BenchmarkError("private C:/Users/name/.codex/auth.json stderr details"),
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            code = LOCAL_CLI.main([
+                "--data-dir", str(self.data), "benchmark", "--real-preflight", "--codex-bin", "codex", "--json",
+            ])
+        payload = json.loads(output.getvalue())
+        self.assertEqual(2, code)
+        self.assertEqual("RouteCraftLocalError", payload["error"]["code"])
+        self.assertIn("REAL_BENCHMARK_PREFLIGHT_FAILED", payload["error"]["message"])
+        self.assertNotIn("C:/Users/name", payload["error"]["message"])
+        self.assertNotIn("InternalError", json.dumps(payload))
+
+    def test_real_benchmark_preflight_preserves_native_windows_safe_code(self) -> None:
+        import routecraft_real_benchmark as real_benchmark
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                real_benchmark,
+                "benchmark_sandbox_preflight",
+                side_effect=real_benchmark.NativeWindowsBrokerUnsupported(),
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            code = LOCAL_CLI.main([
+                "--data-dir", str(self.data), "benchmark", "--real-preflight", "--codex-bin", "codex", "--json",
+            ])
+        payload = json.loads(output.getvalue())
+        self.assertEqual(2, code)
+        self.assertIn(real_benchmark.NATIVE_WINDOWS_BROKER_ERROR_CODE, payload["error"]["message"])
+        self.assertNotIn("auth.json", payload["error"]["message"])
+
     def test_graph_cli_validates_selects_ready_units_and_gates_enforce(self) -> None:
         plan_path = self.base / "graph-plan.json"
         plan_path.write_text(json.dumps({
@@ -519,19 +561,31 @@ class RouteCraftLocalCliTests(unittest.TestCase):
             ),
             stderr="",
         )
-        with mock.patch.object(LOCAL_CLI.os, "name", "nt"), mock.patch.object(
+        with mock.patch.object(LOCAL_CLI, "_resolve_codex_executable", return_value="C:/trusted/codex.exe"), mock.patch.object(
             LOCAL_CLI.subprocess, "run", return_value=completed
         ) as run:
             self.assertEqual(1, LOCAL_CLI._routecraft_plugin_registration_count())
         self.assertEqual(
-            ["cmd.exe", "/d", "/c", "codex.cmd", "plugin", "list", "--json"],
+            ["C:/trusted/codex.exe", "plugin", "list", "--json"],
             run.call_args.args[0],
         )
 
     def test_plugin_registration_count_returns_none_for_invalid_json(self) -> None:
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="not json", stderr="")
-        with mock.patch.object(LOCAL_CLI.subprocess, "run", return_value=completed):
+        with mock.patch.object(LOCAL_CLI, "_resolve_codex_executable", return_value="/trusted/codex"), mock.patch.object(LOCAL_CLI.subprocess, "run", return_value=completed):
             self.assertIsNone(LOCAL_CLI._routecraft_plugin_registration_count())
+
+    def test_codex_resolution_drops_relative_path_entries_and_never_uses_cmd_shell(self) -> None:
+        trusted = Path(self.base) / "trusted" / "codex.exe"
+        trusted.parent.mkdir(parents=True)
+        trusted.write_bytes(b"native")
+
+        def resolve(_name: str, *, path: str) -> str:
+            self.assertNotIn(".", path.split(os.pathsep))
+            return str(trusted)
+
+        with mock.patch.dict(os.environ, {"PATH": "." + os.pathsep + str(trusted.parent)}), mock.patch.object(LOCAL_CLI.os, "name", "nt"), mock.patch.object(LOCAL_CLI.shutil, "which", side_effect=resolve):
+            self.assertEqual(str(trusted.resolve()), LOCAL_CLI._resolve_codex_executable())
 
 
 if __name__ == "__main__":

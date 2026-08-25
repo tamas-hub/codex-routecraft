@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -63,13 +64,33 @@ def _collector_config() -> dict[str, Any]:
         return {}
 
 
+def _resolve_codex_executable() -> str | None:
+    """Resolve an absolute executable without invoking a repository-local shim."""
+    safe_path = os.pathsep.join(
+        entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and Path(entry).expanduser().is_absolute()
+    )
+    names = ("codex.cmd", "codex.exe", "codex") if os.name == "nt" else ("codex",)
+    for name in names:
+        found = shutil.which(name, path=safe_path)
+        if not found:
+            continue
+        candidate = Path(found).resolve()
+        if os.name != "nt" or candidate.suffix.lower() == ".exe":
+            return str(candidate) if candidate.is_file() else None
+        package = candidate.parent / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai"
+        matches = sorted(package.glob("codex-win32-*/vendor/*/bin/codex.exe")) if package.is_dir() else []
+        if len(matches) == 1 and matches[0].is_file():
+            return str(matches[0].resolve())
+    return None
+
+
 def _routecraft_plugin_registration_count() -> int | None:
     try:
-        command = ["codex", "plugin", "list", "--json"]
-        if os.name == "nt":
-            # Python cannot launch the extensionless WindowsApps launcher directly;
-            # use the npm shim through cmd.exe, matching the PowerShell command.
-            command = ["cmd.exe", "/d", "/c", "codex.cmd", "plugin", "list", "--json"]
+        executable = _resolve_codex_executable()
+        if executable is None:
+            return None
+        command = [executable, "plugin", "list", "--json"]
         completed = subprocess.run(
             command,
             stdout=subprocess.PIPE,
@@ -1244,7 +1265,18 @@ def _handle(args: argparse.Namespace, service: RouteCraftService, json_mode: boo
         if args.real_preflight:
             import routecraft_real_benchmark as real_benchmark
 
-            result = real_benchmark.benchmark_sandbox_preflight(args.codex_bin)
+            try:
+                result = real_benchmark.benchmark_sandbox_preflight(args.codex_bin)
+            except real_benchmark.BenchmarkError as exc:
+                # The benchmark runner may hold private paths or sandbox
+                # diagnostics internally.  Keep the normal local CLI contract
+                # safe instead of letting it fall into InternalError or
+                # classifying raw private broker diagnostics by substring.
+                if isinstance(exc, real_benchmark.NativeWindowsBrokerUnsupported):
+                    raise RouteCraftLocalError(f"{exc.code}: {exc}") from exc
+                raise RouteCraftLocalError(
+                    "REAL_BENCHMARK_PREFLIGHT_FAILED: Sandbox, plugin, or isolation verification failed closed."
+                ) from exc
             _emit(result, json_mode=json_mode)
             return 0
         import routecraft_benchmark_lab as lab

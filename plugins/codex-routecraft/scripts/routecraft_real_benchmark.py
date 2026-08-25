@@ -16,9 +16,12 @@ import contextlib
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
+import signal
+import socket
 import statistics
 import subprocess
 import sys
@@ -38,6 +41,7 @@ SCHEMA_VERSION = 3
 SUITE_SCHEMA_VERSION = 1
 DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_REASONING_EFFORT = "medium"
+TESTED_CODEX_CLI_VERSION = "0.148.0"
 DEFAULT_TIMEOUT_SECONDS = 900
 MAX_PARALLELISM = 4
 DEFAULT_PILOT_CASE_COUNT = 3
@@ -45,10 +49,18 @@ DEFAULT_MAX_RUNS = 20
 DEFAULT_MAX_TOTAL_TOKENS = 500_000
 DEFAULT_MAX_TOKENS_PER_RUN = 25_000
 ROUTECRAFT_CONTRACT_VERSION = "routecraft-real-benchmark-v1"
+NATIVE_WINDOWS_BROKER_ERROR_CODE = "REAL_BENCHMARK_NATIVE_WINDOWS_BROKER_UNSUPPORTED"
+NATIVE_WINDOWS_BROKER_ERROR_MESSAGE = (
+    "same-host separate CODEX_HOME credential isolation is unsupported on native Windows "
+    "with Codex CLI 0.148.0; use WSL2, a dedicated VM, macOS, or Linux"
+)
+PREFLIGHT_ISOLATION_ERROR_CODE = "REAL_BENCHMARK_PREFLIGHT_ISOLATION_FAILED"
 DEFAULT_SUITE_PATH = Path(__file__).resolve().parents[3] / "samples" / "real-agent-benchmark-suite.json"
 BUNDLED_SUITE_SHA256 = "1a5391021359701598cc6dfb27846960a12ea37015c4e75480ea1ba777ca4607"
 SAFE_RELATIVE_PATH = re.compile(r"^[A-Za-z0-9.][A-Za-z0-9._/-]*$")
 SAFE_CATEGORY = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+SAFE_SUITE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
+UTC_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 FORBIDDEN_AGGREGATE_TEXT = re.compile(
     r"(?:prompt|source|workspace|artifact|path|ndjson|stdout|stderr|task_text)", re.I
 )
@@ -73,6 +85,25 @@ D1_METRICS = (
 
 class BenchmarkError(RuntimeError):
     pass
+
+
+class NativeWindowsBrokerUnsupported(BenchmarkError):
+    """Stable, privacy-safe failure for an unsupported credential boundary."""
+
+    code = NATIVE_WINDOWS_BROKER_ERROR_CODE
+
+    def __init__(self) -> None:
+        super().__init__(NATIVE_WINDOWS_BROKER_ERROR_MESSAGE)
+
+
+def _is_native_windows() -> bool:
+    # WSL reports POSIX here and intentionally remains on the supported path.
+    return os.name == "nt"
+
+
+def _require_supported_real_benchmark_platform() -> None:
+    if _is_native_windows():
+        raise NativeWindowsBrokerUnsupported()
 
 
 def _authorize_executable_suite(path: str | Path, *, allow_custom: bool, confirmation: str | None) -> None:
@@ -133,8 +164,9 @@ def load_suite(path: str | Path) -> dict[str, Any]:
     suite = _read_json(Path(path))
     if int(suite.get("schema_version", 0)) != SUITE_SCHEMA_VERSION:
         raise BenchmarkError("unsupported real benchmark suite schema")
-    if not str(suite.get("suite_id", "")).strip():
-        raise BenchmarkError("benchmark suite requires suite_id")
+    suite_id = str(suite.get("suite_id", "")).strip()
+    if not SAFE_SUITE_ID.fullmatch(suite_id) or FORBIDDEN_AGGREGATE_TEXT.search(suite_id):
+        raise BenchmarkError("benchmark suite requires a portable non-sensitive suite_id")
     cases = suite.get("cases")
     if not isinstance(cases, list) or len(cases) < 10:
         raise BenchmarkError("benchmark suite requires at least 10 cases")
@@ -325,22 +357,57 @@ def _start_graph_condition(case: Mapping[str, Any], graph_mode: str, evaluation_
     }
 
 
+def _secure_directory(target: Path, *, exist_ok: bool) -> Path:
+    """Create/lock one private benchmark directory without following a leaf link."""
+    target = target.expanduser()
+    if target.is_symlink():
+        raise BenchmarkError("benchmark private directory must not be a symlink")
+    target = target.resolve()
+    try:
+        target.mkdir(parents=True, exist_ok=exist_ok, mode=0o700)
+        if not target.is_dir() or target.is_symlink():
+            raise BenchmarkError("benchmark private directory is not a regular directory")
+        os.chmod(target, 0o700)
+    except OSError as exc:
+        raise BenchmarkError("benchmark private directory could not be secured") from exc
+    return target
+
+
+def _write_private_text(target: Path, content: str) -> None:
+    """Atomically write sensitive local evidence with owner-only permissions."""
+    _secure_directory(target.parent, exist_ok=True)
+    if target.is_symlink():
+        raise BenchmarkError("benchmark private artifact must not be a symlink")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+        os.chmod(target, 0o600)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+
+
 def materialize_case(case: Mapping[str, Any], destination: Path, *, routecraft_contract: str | None = None) -> Path:
     """Create a case in an empty target and initialise an isolated Git repo."""
     destination = destination.expanduser().resolve()
     if destination.exists() and any(destination.iterdir()):
         raise BenchmarkError(f"materialize destination must be empty: {destination}")
-    destination.mkdir(parents=True, exist_ok=True)
+    _secure_directory(destination, exist_ok=True)
     for item in case["files"]:
         target = destination / _relative_path(item["path"])
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(str(item["content"]), encoding="utf-8", newline="\n")
+        _write_private_text(target, str(item["content"]))
     if routecraft_contract is not None:
-        (destination / "AGENTS.md").write_text(routecraft_contract, encoding="utf-8", newline="\n")
+        _write_private_text(destination / "AGENTS.md", routecraft_contract)
     try:
         subprocess.run(["git", "init", "-b", "main", str(destination)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
         empty_hooks = destination / ".git" / "routecraft-empty-hooks"
-        empty_hooks.mkdir(parents=True, exist_ok=False)
+        _secure_directory(empty_hooks, exist_ok=False)
         subprocess.run(["git", "-C", str(destination), "config", "user.email", "benchmark@localhost"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
         subprocess.run(["git", "-C", str(destination), "config", "user.name", "RouteCraft Benchmark"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
         subprocess.run(["git", "-C", str(destination), "config", "core.hooksPath", str(empty_hooks)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
@@ -578,26 +645,60 @@ def codex_command(
 
 
 def resolve_codex_bin(value: str) -> str:
-    """Resolve the native CLI on Windows instead of the extensionless npm shim."""
+    """Resolve only the host's configured Codex CLI, never an arbitrary binary."""
     def native_for_launcher(path: Path) -> Path | None:
         if os.name != "nt" or path.suffix.lower() not in {".cmd", ".ps1"}: return None
         package = path.parent / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai"
         matches = sorted(package.glob("codex-win32-*/vendor/*/bin/codex.exe")) if package.is_dir() else []
         return matches[0].resolve() if len(matches) == 1 and matches[0].is_file() else None
 
-    candidate = Path(value).expanduser()
-    if candidate.is_file():
-        resolved_candidate = candidate.resolve()
-        return str(native_for_launcher(resolved_candidate) or resolved_candidate)
     # The Microsoft Store alias can resolve first yet reject CreateProcess from
     # Python.  The npm .cmd launcher reliably selects its bundled native CLI.
-    names = [f"{value}.cmd", f"{value}.exe", value] if os.name == "nt" else [value]
+    names = ["codex.cmd", "codex.exe", "codex"] if os.name == "nt" else ["codex"]
+    safe_path = os.pathsep.join(
+        entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and Path(entry).expanduser().is_absolute()
+    )
+    trusted: Path | None = None
     for name in names:
-        resolved = shutil.which(name)
+        resolved = shutil.which(name, path=safe_path)
         if resolved:
             resolved_path = Path(resolved).resolve()
-            return str(native_for_launcher(resolved_path) or resolved_path)
-    raise BenchmarkError(f"Codex executable was not found: {value}")
+            trusted = native_for_launcher(resolved_path) or resolved_path
+            break
+    if trusted is None or not trusted.is_file():
+        raise BenchmarkError("the trusted Codex CLI executable was not found")
+    if value != "codex":
+        candidate = Path(value).expanduser()
+        candidate_path = candidate.resolve() if candidate.is_file() else Path(shutil.which(value, path=safe_path) or value).resolve()
+        candidate_path = native_for_launcher(candidate_path) or candidate_path
+        if candidate_path != trusted:
+            raise BenchmarkError("--codex-bin must resolve to the trusted host Codex CLI")
+    return str(trusted)
+
+
+def _verify_codex_cli_identity(codex_bin: str) -> str:
+    trusted = Path(resolve_codex_bin("codex")).resolve()
+    candidate = Path(codex_bin).expanduser().resolve()
+    if candidate != trusted or not candidate.is_file() or candidate.is_symlink():
+        raise BenchmarkError("benchmark broker requires the trusted host Codex CLI")
+    mode = candidate.stat().st_mode
+    if os.name != "nt" and mode & 0o022:
+        raise BenchmarkError("trusted Codex CLI must not be group- or world-writable")
+    process = subprocess.run(
+        [str(candidate), "--version"],
+        env=_sanitized_environment(include_codex_paths=False),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+        check=False,
+    )
+    if process.returncode != 0 or process.stdout.strip() != f"codex-cli {TESTED_CODEX_CLI_VERSION}":
+        raise BenchmarkError(f"real benchmark requires tested Codex CLI {TESTED_CODEX_CLI_VERSION}")
+    return str(candidate)
 
 
 def _toml_string(value: str | Path) -> str:
@@ -605,10 +706,11 @@ def _toml_string(value: str | Path) -> str:
 
 
 def _permission_profile_config(*, broker_home: Path, workspace: Path, evaluation_dir: Path, harness: Path, codex_bin: str) -> str:
+    _require_supported_real_benchmark_platform()
     workspace = workspace.resolve(); evaluation_dir = evaluation_dir.resolve(); harness = harness.resolve(); broker_home = broker_home.resolve()
     tool_tmp = workspace / ".git" / "routecraft-tool-tmp"
-    tool_tmp.mkdir(parents=True, exist_ok=True)
-    platform_null = "NUL" if os.name == "nt" else "/dev/null"
+    _secure_directory(tool_tmp, exist_ok=True)
+    platform_null = "/dev/null"
     env_values = {
         "PATH": os.environ.get("PATH", ""),
         "PYTHONUTF8": "1",
@@ -636,10 +738,9 @@ def _permission_profile_config(*, broker_home: Path, workspace: Path, evaluation
         rows.extend((f"[permissions.{name}.network]", f"enabled = {'true' if network else 'false'}"))
         return "\n".join(rows)
 
-    solver = filesystem("benchmark-solver", ((workspace, "write"), (evaluation_dir, "write"), (broker_home, "none"), (codex_root, "read"), (python_root, "read")), network=False)
-    outer = filesystem("benchmark-outer", ((workspace, "write"), (evaluation_dir, "write"), (harness, "read"), (broker_home, "write"), (codex_root, "read"), (python_root, "read")), network=True)
-    acceptance = filesystem("benchmark-acceptance", ((workspace, "read"), (harness, "read"), (broker_home, "none"), (codex_root, "read"), (python_root, "read")), network=False)
-    platform_sandbox = ('[windows]', 'sandbox = "elevated"') if os.name == "nt" else ()
+    solver = filesystem("benchmark-solver", ((workspace, "write"), (evaluation_dir, "write"), (harness, "deny"), (broker_home, "deny"), (codex_root, "read"), (python_root, "read")), network=False)
+    outer = filesystem("benchmark-outer", ((workspace, "write"), (evaluation_dir, "write"), (harness, "deny"), (broker_home, "write"), (codex_root, "read"), (python_root, "read")), network=True)
+    acceptance = filesystem("benchmark-acceptance", ((workspace, "read"), (harness, "read"), (broker_home, "deny"), (codex_root, "read"), (python_root, "read")), network=False)
     marketplace_root = broker_home / "routecraft-marketplace"
     return "\n".join((
         'default_permissions = "benchmark-solver"',
@@ -656,7 +757,6 @@ def _permission_profile_config(*, broker_home: Path, workspace: Path, evaluation
         solver,
         outer,
         acceptance,
-        *platform_sandbox,
         '[marketplaces.routecraft]',
         'source_type = "local"',
         f'source = {_toml_string(marketplace_root)}',
@@ -669,54 +769,55 @@ def _install_isolated_routecraft_plugin(*, codex_bin: str, broker_home: Path) ->
         include_codex_paths=False,
         extra={"CODEX_HOME": str(broker_home)},
     )
-    process = subprocess.run(
+    returncode, _stdout, _stderr, timed_out = _model_process_tree(
         [codex_bin, "plugin", "add", "codex-routecraft@routecraft", "--json"],
         cwd=broker_home,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        check=False,
+        environment=environment,
+        timeout_seconds=30,
     )
-    if process.returncode != 0:
+    if timed_out or returncode != 0:
         raise BenchmarkError("the isolated unified RouteCraft plugin could not be installed")
 
 
 @contextlib.contextmanager
 def _isolated_codex_home(*, workspace: Path, evaluation_dir: Path, harness: Path, codex_bin: str) -> Iterable[Path]:
+    # Native Windows Codex 0.148.0 binds elevated sandbox credentials to the
+    # active CODEX_HOME. Copying auth into a second home cannot establish an
+    # independent credential plane safely, so stop before inspecting or
+    # copying authentication material. WSL follows the POSIX path.
+    _require_supported_real_benchmark_platform()
+    codex_bin = _verify_codex_cli_identity(codex_bin)
     source_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser().resolve()
     source_auth = source_home / "auth.json"
     if not source_auth.is_file() or source_auth.is_symlink():
         raise BenchmarkError("an ordinary local Codex auth.json is required for the isolated benchmark broker")
     temporary = tempfile.TemporaryDirectory(prefix="routecraft-benchmark-auth-")
-    broker_home = Path(temporary.name).resolve()
+    broker_home = _secure_directory(Path(temporary.name).resolve(), exist_ok=True)
     broker_auth = broker_home / "auth.json"
     try:
         shutil.copyfile(source_auth, broker_auth)
-        if os.name != "nt": os.chmod(broker_auth, 0o600)
+        os.chmod(broker_auth, 0o600)
         for name in ("installation_id", "cap_sid"):
             source = source_home / name
-            if source.is_file() and not source.is_symlink(): shutil.copyfile(source, broker_home / name)
+            if source.is_file() and not source.is_symlink():
+                shutil.copyfile(source, broker_home / name)
+                os.chmod(broker_home / name, 0o600)
         runtime_root = Path(__file__).resolve().parents[3]
         source_marketplace = runtime_root / ".agents" / "plugins" / "marketplace.json"
         source_plugin = runtime_root / "plugins" / "codex-routecraft"
         if not source_marketplace.is_file() or not (source_plugin / ".codex-plugin" / "plugin.json").is_file():
             raise BenchmarkError("the unified RouteCraft plugin source is incomplete")
         marketplace_root = broker_home / "routecraft-marketplace"
-        (marketplace_root / ".agents" / "plugins").mkdir(parents=True)
+        _secure_directory(marketplace_root / ".agents" / "plugins", exist_ok=False)
         shutil.copyfile(source_marketplace, marketplace_root / ".agents" / "plugins" / "marketplace.json")
         shutil.copytree(
             source_plugin,
             marketplace_root / "plugins" / "codex-routecraft",
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
         )
-        (broker_home / "config.toml").write_text(
+        _write_private_text(
+            broker_home / "config.toml",
             _permission_profile_config(broker_home=broker_home, workspace=workspace, evaluation_dir=evaluation_dir, harness=harness, codex_bin=codex_bin),
-            encoding="utf-8",
-            newline="\n",
         )
         _install_isolated_routecraft_plugin(codex_bin=codex_bin, broker_home=broker_home)
         yield broker_home
@@ -730,20 +831,16 @@ def _isolated_codex_home(*, workspace: Path, evaluation_dir: Path, harness: Path
 def _verify_routecraft_plugin_registration(
     *, codex_bin: str, broker_home: Path, environment: Mapping[str, str]
 ) -> dict[str, Any]:
-    process = subprocess.run(
+    returncode, stdout, _stderr, timed_out = _model_process_tree(
         [codex_bin, "plugin", "list", "--marketplace", "routecraft", "--json"],
         cwd=broker_home,
-        env=dict(environment),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        check=False,
+        environment=environment,
+        timeout_seconds=30,
     )
+    if timed_out:
+        raise BenchmarkError("unified RouteCraft plugin registration verification timed out")
     try:
-        payload = json.loads(process.stdout)
+        payload = json.loads(stdout)
     except json.JSONDecodeError as error:
         raise BenchmarkError("unified RouteCraft plugin registration could not be verified") from error
     installed = payload.get("installed") if isinstance(payload, dict) else None
@@ -752,7 +849,7 @@ def _verify_routecraft_plugin_registration(
         for item in installed or []
         if isinstance(item, dict) and item.get("pluginId") == "codex-routecraft@routecraft"
     ]
-    if process.returncode != 0 or len(matching) != 1:
+    if returncode != 0 or len(matching) != 1:
         installed_ids = sorted(
             str(item.get("pluginId"))
             for item in installed or []
@@ -760,7 +857,7 @@ def _verify_routecraft_plugin_registration(
         )
         raise BenchmarkError(
             "isolated benchmark requires exactly one unified RouteCraft plugin registration "
-            f"(returncode={process.returncode}, installed_ids={installed_ids})"
+            f"(returncode={returncode}, installed_ids={installed_ids})"
         )
     plugin = matching[0]
     expected_source = (broker_home / "routecraft-marketplace" / "plugins" / "codex-routecraft").resolve()
@@ -781,6 +878,53 @@ def _sandbox_command(codex_bin: str, profile: str, workspace: Path, command: Seq
     return [codex_bin, "sandbox", "-P", profile, "-C", str(workspace.resolve()), "--", *command]
 
 
+def _model_process_tree(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    environment: Mapping[str, str],
+    timeout_seconds: int,
+) -> tuple[int | None, str, str, bool]:
+    """Run one broker child command in a killable POSIX process group.
+
+    Native Windows never reaches this function. A timeout terminates the
+    sandbox launcher and its descendants before broker credentials are cleaned
+    up or post-run accounting proceeds.
+    """
+    if os.name == "nt":
+        raise NativeWindowsBrokerUnsupported()
+    try:
+        process = subprocess.Popen(
+            list(command),
+            cwd=str(cwd),
+            env=dict(environment),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise BenchmarkError("benchmark model process could not be started") from exc
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        return process.returncode, stdout, stderr, False
+    except subprocess.TimeoutExpired:
+        for terminate_signal, grace in ((signal.SIGTERM, 3), (signal.SIGKILL, 5)):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, terminate_signal)
+            try:
+                stdout, stderr = process.communicate(timeout=grace)
+                # A descendant may remain even after the direct launcher exits.
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                return None, stdout or "", stderr or "", True
+            except subprocess.TimeoutExpired:
+                continue
+        raise BenchmarkError("timed-out benchmark process tree could not be terminated")
+
+
 def _verify_sandbox_profiles(
     *,
     codex_bin: str,
@@ -790,21 +934,36 @@ def _verify_sandbox_profiles(
     private_sentinel: Path,
     environment: Mapping[str, str],
 ) -> None:
+    harness_probe = harness / ".routecraft-boundary-probe"
+    _write_private_text(harness_probe, "immutable acceptance boundary\n")
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(4)
+    network_probe_port = int(listener.getsockname()[1])
     probe = """
 import pathlib, socket, sys
-profile, broker, workspace, harness, private_sentinel = sys.argv[1:]
+profile, broker, workspace, harness_probe, private_sentinel, network_probe_port = sys.argv[1:]
 failures = []
 try:
     pathlib.Path(broker, 'auth.json').read_bytes()
-    failures.append('broker-readable')
+    broker_readable = True
 except OSError:
-    pass
+    broker_readable = False
+if broker_readable != (profile == 'benchmark-outer'):
+    failures.append('broker-boundary')
 try:
     pathlib.Path(private_sentinel).read_bytes()
     failures.append('private-home-readable')
 except OSError:
     pass
-if not pathlib.Path(workspace, '.git', 'HEAD').is_file() or not pathlib.Path(harness).is_dir():
+try:
+    pathlib.Path(harness_probe).read_bytes()
+    harness_readable = True
+except OSError:
+    harness_readable = False
+if harness_readable != (profile == 'benchmark-acceptance'):
+    failures.append('harness-boundary')
+if not pathlib.Path(workspace, '.git', 'HEAD').is_file():
     failures.append('required-read-denied')
 probe_path = pathlib.Path(workspace, '.git', 'routecraft-permission-probe')
 try:
@@ -815,61 +974,87 @@ except OSError:
 finally:
     try: probe_path.unlink()
     except OSError: pass
-if (profile == 'benchmark-solver') != wrote:
+if (profile in {'benchmark-solver', 'benchmark-outer'}) != wrote:
     failures.append('write-boundary')
 sock = socket.socket()
 try:
-    sock.bind(('127.0.0.1', 0))
-    failures.append('network-boundary')
+    sock.settimeout(2)
+    sock.connect(('127.0.0.1', int(network_probe_port)))
+    network_available = True
 except OSError:
-    pass
+    network_available = False
 finally:
     sock.close()
+if network_available != (profile == 'benchmark-outer'):
+    failures.append('network-boundary')
 if failures:
     print(','.join(failures))
     raise SystemExit(97)
 print('ROUTECRAFT_SANDBOX_OK')
 """.strip()
-    for profile in ("benchmark-solver", "benchmark-acceptance"):
-        command = _sandbox_command(
-            codex_bin,
-            profile,
-            workspace,
-            [sys.executable, "-I", "-B", "-c", probe, profile, str(broker_home), str(workspace), str(harness), str(private_sentinel)],
-        )
-        try:
-            process = subprocess.run(command, cwd=workspace, env=dict(environment), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=30, check=False)
-        except subprocess.TimeoutExpired as error:
-            raise BenchmarkError(
-                f"{profile} isolation probe timed out; elevated sandbox approval or helper readiness is unavailable"
-            ) from error
-        if process.returncode != 0 or process.stdout.strip() != "ROUTECRAFT_SANDBOX_OK":
-            detail = "\n".join(part.strip() for part in (process.stdout, process.stderr) if part.strip())
-            for path, replacement in (
-                (str(broker_home), "<broker>"),
-                (str(workspace), "<workspace>"),
-                (str(harness), "<harness>"),
-                (str(private_sentinel), "<private-sentinel>"),
-            ):
-                detail = detail.replace(path, replacement)
-            raise BenchmarkError(f"{profile} isolation probe failed closed: {detail[-800:] or 'no diagnostic'}")
+    try:
+        for profile in ("benchmark-solver", "benchmark-outer", "benchmark-acceptance"):
+            command = _sandbox_command(
+                codex_bin,
+                profile,
+                workspace,
+                [sys.executable, "-I", "-B", "-c", probe, profile, str(broker_home), str(workspace), str(harness_probe), str(private_sentinel), str(network_probe_port)],
+            )
+            try:
+                returncode, stdout, _stderr, timed_out = _model_process_tree(
+                    command,
+                    cwd=workspace,
+                    environment=environment,
+                    timeout_seconds=30,
+                )
+            except BenchmarkError as error:
+                raise BenchmarkError(
+                    f"{PREFLIGHT_ISOLATION_ERROR_CODE}: profile={profile}; reason=process-error; "
+                    "raw child output withheld"
+                ) from error
+            if timed_out:
+                raise BenchmarkError(
+                    f"{PREFLIGHT_ISOLATION_ERROR_CODE}: profile={profile}; reason=timeout; "
+                    "raw child output withheld"
+                )
+            if returncode != 0 or stdout.strip() != "ROUTECRAFT_SANDBOX_OK":
+                # The probe emits only these fixed labels. Never echo raw stdout or
+                # stderr because the Codex launcher can include private host paths.
+                allowed_failures = {
+                    "broker-boundary", "harness-boundary", "private-home-readable",
+                    "required-read-denied", "write-boundary", "network-boundary",
+                }
+                observed = sorted(
+                    label for label in stdout.strip().split(",")
+                    if label in allowed_failures
+                )
+                reason = "+".join(observed) if observed else "unclassified"
+                raise BenchmarkError(
+                    f"{PREFLIGHT_ISOLATION_ERROR_CODE}: profile={profile}; "
+                    f"reason={reason}; returncode={returncode}; raw child output withheld"
+                )
+    finally:
+        listener.close()
+        with contextlib.suppress(FileNotFoundError):
+            harness_probe.unlink()
 
 
 def benchmark_sandbox_preflight(codex_bin: str) -> dict[str, Any]:
     """Prove the solver and acceptance boundaries without invoking a model."""
 
+    _require_supported_real_benchmark_platform()
     resolved_codex = resolve_codex_bin(codex_bin)
     source_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser().resolve()
     private_sentinel = source_home / "auth.json"
     with tempfile.TemporaryDirectory(prefix="routecraft-benchmark-preflight-") as temporary:
-        root = Path(temporary).resolve()
+        root = _secure_directory(Path(temporary).resolve(), exist_ok=True)
         workspace = root / "workspace"
         harness = root / "acceptance-harness"
         evaluation_dir = root / "evaluation"
-        (workspace / ".git").mkdir(parents=True)
-        (workspace / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
-        harness.mkdir()
-        evaluation_dir.mkdir()
+        _secure_directory(workspace / ".git", exist_ok=False)
+        _write_private_text(workspace / ".git" / "HEAD", "ref: refs/heads/main\n")
+        _secure_directory(harness, exist_ok=False)
+        _secure_directory(evaluation_dir, exist_ok=False)
         with _isolated_codex_home(
             workspace=workspace,
             evaluation_dir=evaluation_dir,
@@ -898,11 +1083,13 @@ def benchmark_sandbox_preflight(codex_bin: str) -> dict[str, Any]:
     return {
         "status": "PASS",
         "model_invoked": False,
-        "profiles": ["benchmark-solver", "benchmark-acceptance"],
+        "profiles": ["benchmark-solver", "benchmark-outer", "benchmark-acceptance"],
         "unified_plugin": plugin,
         "broker_auth_readable": False,
         "private_home_readable": False,
-        "direct_network_available": False,
+        "solver_direct_network_available": False,
+        "outer_direct_network_available": True,
+        "acceptance_direct_network_available": False,
         "acceptance_workspace_writable": False,
     }
 
@@ -1096,7 +1283,7 @@ def _oracle_paths(case: Mapping[str, Any]) -> set[str]:
 
 
 def _prepare_acceptance_harness(case: Mapping[str, Any], root: Path) -> tuple[Path, dict[str, str]]:
-    root.mkdir(parents=True, exist_ok=False)
+    _secure_directory(root, exist_ok=False)
     hashes: dict[str, str] = {}
     oracle = _oracle_paths(case)
     for item in case["files"]:
@@ -1104,9 +1291,8 @@ def _prepare_acceptance_harness(case: Mapping[str, Any], root: Path) -> tuple[Pa
         if relative not in oracle:
             continue
         target = root / _relative_path(relative)
-        target.parent.mkdir(parents=True, exist_ok=True)
         content = str(item["content"])
-        target.write_text(content, encoding="utf-8", newline="\n")
+        _write_private_text(target, content)
         hashes[relative] = hashlib.sha256(content.encode("utf-8")).hexdigest()
     return root, hashes
 
@@ -1140,11 +1326,13 @@ def _run_acceptance(case: Mapping[str, Any], workspace: Path, harness: Path, tim
     oracle = _oracle_paths(case)
     for command in case["acceptance"]:
         argv = _sandbox_command(codex_bin, "benchmark-acceptance", workspace, _acceptance_command(command, harness, oracle))
-        try:
-            process = subprocess.run(argv, cwd=workspace, env=dict(environment), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=timeout_seconds, check=False)
-            results.append({"returncode": process.returncode, "stdout": process.stdout, "stderr": process.stderr})
-        except subprocess.TimeoutExpired as exc:
-            results.append({"returncode": None, "stdout": str(exc.stdout or ""), "stderr": str(exc.stderr or ""), "timeout": True})
+        returncode, stdout, stderr, timed_out = _model_process_tree(
+            argv,
+            cwd=workspace,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+        )
+        results.append({"returncode": returncode, "stdout": stdout, "stderr": stderr, "timeout": timed_out})
     if not results:
         return None, results
     return all(item.get("returncode") == 0 for item in results), results
@@ -1180,12 +1368,17 @@ def _changed_requirements(case: Mapping[str, Any], workspace: Path, oracle_hashe
 
 
 def run_one(case: Mapping[str, Any], mode: str, *, output_dir: Path, codex_bin: str, model: str, reasoning_effort: str, timeout_seconds: int) -> dict[str, Any]:
+    # This check precedes artifact creation, graph/evaluation setup, auth
+    # inspection, UAC/helper setup, and every possible model invocation.
+    _require_supported_real_benchmark_platform()
+    codex_bin = _verify_codex_cli_identity(codex_bin)
     if mode not in MODE_SPECS:
         raise BenchmarkError(f"unsupported benchmark mode: {mode}")
+    output_dir = _secure_directory(output_dir, exist_ok=True)
     spec = MODE_SPECS[mode]
     run_id = uuid.uuid4().hex
     artifact_dir = output_dir / "artifacts" / run_id
-    artifact_dir.mkdir(parents=True, exist_ok=False)
+    _secure_directory(artifact_dir, exist_ok=False)
     started_at = utc_now()
     start = time.monotonic()
     evaluation_dir = artifact_dir / "evaluation"
@@ -1214,7 +1407,7 @@ def run_one(case: Mapping[str, Any], mode: str, *, output_dir: Path, codex_bin: 
         routecraft_contract=routecraft_state.get("contract"),
     )
     harness, oracle_hashes = _prepare_acceptance_harness(case, artifact_dir / "acceptance-harness")
-    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    _secure_directory(evaluation_dir, exist_ok=True)
     source_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser().resolve()
     private_sentinel = source_home / "auth.json"
     with _isolated_codex_home(workspace=workspace, evaluation_dir=evaluation_dir, harness=harness, codex_bin=codex_bin) as broker_home:
@@ -1243,17 +1436,15 @@ def run_one(case: Mapping[str, Any], mode: str, *, output_dir: Path, codex_bin: 
         )
         command = _sandbox_command(codex_bin, "benchmark-outer", workspace, inner_command)
         timed_out = False
-        try:
-            process = subprocess.run(command, cwd=workspace, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=timeout_seconds, check=False)
-            returncode: int | None = process.returncode
-            stdout, stderr = process.stdout, process.stderr
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            returncode = None
-            stdout, stderr = str(exc.stdout or ""), str(exc.stderr or "")
+        returncode, stdout, stderr, timed_out = _model_process_tree(
+            command,
+            cwd=workspace,
+            environment=env,
+            timeout_seconds=timeout_seconds,
+        )
         tests_pass, acceptance_artifacts = _run_acceptance(case, workspace, harness, timeout_seconds, codex_bin=codex_bin, broker_home=broker_home, environment=env)
-    (artifact_dir / "codex.ndjson").write_text(stdout, encoding="utf-8")
-    (artifact_dir / "codex.stderr.txt").write_text(stderr, encoding="utf-8")
+    _write_private_text(artifact_dir / "codex.ndjson", stdout)
+    _write_private_text(artifact_dir / "codex.stderr.txt", stderr)
     parsed = parse_ndjson(stdout)
     if parsed.get("lane_distribution") is None:
         parsed["lane_distribution"] = _configured_lane(model)
@@ -1269,7 +1460,7 @@ def run_one(case: Mapping[str, Any], mode: str, *, output_dir: Path, codex_bin: 
     routecraft_state["useful_record_ids"] = list(marker["routecraft_memory_useful_ids"])
     acceptance_change = _changed_requirements(case, workspace, oracle_hashes)
     solver_acceptance_pass = tests_pass if acceptance_change is None else bool(tests_pass and acceptance_change)
-    (artifact_dir / "acceptance.json").write_text(json.dumps(acceptance_artifacts, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_private_text(artifact_dir / "acceptance.json", json.dumps(acceptance_artifacts, ensure_ascii=False, indent=2))
     raw_task_success = returncode == 0
     if timed_out:
         outcome = "cancelled"
@@ -1327,7 +1518,7 @@ def run_one(case: Mapping[str, Any], mode: str, *, output_dir: Path, codex_bin: 
         "wall_time_ms": duration_ms, "memory_recall_count": recall_count, "memory_useful_count": useful_count,
         **parsed,
     }
-    (artifact_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    _write_private_text(artifact_dir / "result.json", json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return result
 
 
@@ -1368,6 +1559,8 @@ def _metric_evidence(rows: Sequence[Mapping[str, Any]], metric: str) -> dict[str
 
 
 def summarize(records: Sequence[Mapping[str, Any]], *, suite_id: str = "unknown", planned_case_count: int | None = None) -> dict[str, Any]:
+    if not SAFE_SUITE_ID.fullmatch(suite_id) or FORBIDDEN_AGGREGATE_TEXT.search(suite_id):
+        raise BenchmarkError("suite_id must be a portable non-sensitive identifier")
     by_mode: dict[str, dict[str, Any]] = {}
     for mode in MODE_SPECS:
         rows = [row for row in records if row.get("mode") == mode]
@@ -1416,25 +1609,52 @@ def to_d1_aggregate(summary: Mapping[str, Any], *, device_id: str, observed_at: 
     modes = summary.get("modes") if isinstance(summary.get("modes"), Mapping) else {}
     observed = str(observed_at or summary.get("generated_at") or utc_now())
     suite_version = str(summary.get("suite_version") or summary.get("suite_id", "unknown"))
+    if not UTC_TIMESTAMP.fullmatch(observed):
+        raise BenchmarkError("observed_at must be a whole-second UTC timestamp")
+    try:
+        dt.datetime.strptime(observed, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise BenchmarkError("observed_at is not a valid UTC timestamp") from exc
+    if not SAFE_SUITE_ID.fullmatch(suite_version) or FORBIDDEN_AGGREGATE_TEXT.search(suite_version):
+        raise BenchmarkError("suite_version must be a portable non-sensitive identifier")
     rows: list[dict[str, Any]] = []
     for mode in MODE_SPECS:
         source = modes.get(mode) if isinstance(modes.get(mode), Mapping) else {}
         evidence = source.get("metric_evidence") if isinstance(source.get("metric_evidence"), Mapping) else {}
         for metric in D1_METRICS:
             values = evidence.get(metric) if isinstance(evidence.get(metric), Mapping) else {}
+            case_count = source.get("case_count")
+            sample_size = source.get("sample_size")
+            available_count = values.get("available_count")
+            if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in (case_count, sample_size, available_count)):
+                raise BenchmarkError("benchmark aggregate counts must be non-negative integers")
+            if available_count > sample_size:
+                raise BenchmarkError("benchmark available_count exceeds sample_size")
+            confidence = source.get("confidence")
+            evidence_status = source.get("evidence_status")
+            if confidence not in {"low", "medium", "high"} or evidence_status not in {"insufficient_evidence", "low_confidence", "measured", "unavailable", "failed"}:
+                raise BenchmarkError("benchmark aggregate evidence labels are invalid")
+            numeric_fields = ("mean_value", "median_value", "min_value", "max_value", "success_rate")
+            if any(value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0) for value in (values.get(field) for field in numeric_fields)):
+                raise BenchmarkError("benchmark aggregate statistics are invalid")
+            if values.get("success_rate") is not None and values["success_rate"] > 100:
+                raise BenchmarkError("benchmark aggregate success_rate must not exceed 100")
+            success_count = values.get("success_count")
+            if success_count is not None and (not isinstance(success_count, int) or isinstance(success_count, bool) or success_count < 0 or success_count > available_count):
+                raise BenchmarkError("benchmark aggregate success_count is invalid")
             identity = f"benchmark-evidence:{device_id}:{observed}:{suite_version}:{D1_MODE_NAMES[mode]}:{metric}"
             row = {
                 "evidence_id": hashlib.sha256(identity.encode("utf-8", "replace")).hexdigest()[:32],
                 "device_id": str(device_id), "observed_at": observed, "suite_version": suite_version,
-                "mode": D1_MODE_NAMES[mode], "metric": metric, "case_count": source.get("case_count"),
-                "sample_size": source.get("sample_size"), "available_count": values.get("available_count"),
+                "mode": D1_MODE_NAMES[mode], "metric": metric, "case_count": case_count,
+                "sample_size": sample_size, "available_count": available_count,
                 "mean_value": values.get("mean_value"), "median_value": values.get("median_value"),
                 "min_value": values.get("min_value"), "max_value": values.get("max_value"),
                 "success_count": values.get("success_count"), "success_rate": values.get("success_rate"),
-                "confidence": source.get("confidence"), "evidence_status": source.get("evidence_status"),
+                "confidence": confidence, "evidence_status": evidence_status,
             }
-            if FORBIDDEN_AGGREGATE_TEXT.search(" ".join(row)):
-                raise AssertionError("aggregate contract contains a forbidden raw-data key")
+            if FORBIDDEN_AGGREGATE_TEXT.search(json.dumps(row, ensure_ascii=False, sort_keys=True)):
+                raise BenchmarkError("aggregate contract contains forbidden raw-data text")
             rows.append(row)
     return rows
 
@@ -1461,14 +1681,7 @@ def _write_summary(output_dir: Path, summary: Mapping[str, Any]) -> None:
 
 def _write_json(path: Path, value: Any) -> None:
     target = path.expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(temporary, target)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
+    _write_private_text(target, json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1519,11 +1732,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps({"case": public_case(case), "destination": str(path)}, ensure_ascii=False, indent=2))
             return 0
         if args.command == "run":
+            # Fail before resolving the executable, creating an artifact
+            # directory, inspecting authentication, or printing an executable
+            # plan. Native Windows cannot currently prove the broker boundary.
+            _require_supported_real_benchmark_platform()
             _authorize_executable_suite(args.suite, allow_custom=args.allow_custom_suite, confirmation=args.confirm_custom_suite)
             if args.parallelism < 1 or args.parallelism > MAX_PARALLELISM or args.timeout_seconds < 1 or args.trials < 1 or args.max_runs < 1 or args.max_total_tokens < 1 or args.max_tokens_per_run < 1:
                 raise BenchmarkError(f"parallelism must be 1..{MAX_PARALLELISM} and timeout must be positive")
-            output_dir = Path(args.output_dir).expanduser().resolve()
-            output_dir.mkdir(parents=True, exist_ok=True)
+            requested_output = Path(args.output_dir).expanduser()
+            _secure_directory(requested_output, exist_ok=True)
+            output_dir = requested_output.resolve()
             codex_bin = resolve_codex_bin(args.codex_bin)
             cases = _selected_cases(suite, args.case)
             modes = args.mode or list(DEFAULT_RUN_MODES)
@@ -1584,7 +1802,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(summary, ensure_ascii=False, indent=2))
             return 0
     except BenchmarkError as exc:
-        print(f"routecraft-real-benchmark: {exc}", file=sys.stderr)
+        if isinstance(exc, NativeWindowsBrokerUnsupported):
+            print(json.dumps({
+                "code": exc.code,
+                "message": str(exc),
+                "model_invoked": False,
+            }, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+        else:
+            print(f"routecraft-real-benchmark: {exc}", file=sys.stderr)
         return 2
     return 2
 

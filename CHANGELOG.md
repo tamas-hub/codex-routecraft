@@ -1,5 +1,14 @@
 # Changelog
 
+## RouteCraft Local Runtime 0.7.1 - 2026-08-25
+
+- Made native Windows Real Agent Benchmark fail closed before authentication inspection, credential copying, UAC/helper setup, artifact creation, or model invocation when a separate broker credential boundary cannot be proven with Codex CLI 0.148.0.
+- Kept deterministic benchmarks, Graph observe, Doctor, Security validation, and the 0.6 fast path available on native Windows; Real Agent runs require a successful model-free isolation preflight on macOS, Linux, WSL2, or a dedicated VM.
+- Added privacy-safe benchmark diagnostics with stable error codes, canonical filesystem deny rules, and an immutable acceptance harness that is readable only by the acceptance profile.
+- Added transactional, rollback-capable device installation and deterministic pinned Windows/macOS/source release packages while keeping credentials, Memory Local, Graph State, Decision Store content, and Control Center outside the package.
+- Made rollback restore the exact previous cached plugin through an immutable local marketplace snapshot, prevalidate every backup before mutation, and reject stale or repeated rollback transactions.
+- Preserved unavailable benchmark metrics as local/schema-v4 null evidence while omitting the incompatible legacy schema-v3 row instead of coercing null to zero.
+
 ## RouteCraft Local Runtime 0.7.0 - 2026-08-24
 
 - Added Graph IR v1 with exact node/edge contracts, static validation, versioned lane/config/policy registries, and an observe-first migration path that preserves the 0.6 fast path.
