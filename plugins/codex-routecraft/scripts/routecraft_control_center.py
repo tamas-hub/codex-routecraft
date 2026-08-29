@@ -13,7 +13,7 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
-from routecraft_collector import collect_v4, enabled, payload_batches, validate_payload
+from routecraft_collector import collect_v5, enabled, payload_batches, validate_payload
 
 DEFAULT_CONTROL_CENTER_ORIGIN = "https://routecraft.tama812.chatgpt.site"
 
@@ -61,7 +61,7 @@ def deliver(endpoint: str, token_file: Path, payload: dict[str, object], sites_b
         token = _read_token(token_file)
         if token is None or not validate_payload(payload):
             return {"ok": False, "delivered": False, "state": "unavailable"}
-        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + token, "User-Agent": "RouteCraft-Collector/4"}
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + token, "User-Agent": "RouteCraft-Collector/5"}
         if sites_bypass_token_file is not None:
             bypass = _read_token(sites_bypass_token_file)
             if bypass is None:
@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir")
     parser.add_argument("--sites-bypass-token-file", type=Path)
     args = parser.parse_args(argv)
-    payload = collect_v4(source_root=args.source_root, data_dir=args.data_dir)
+    payload = collect_v5(source_root=args.source_root, data_dir=args.data_dir)
     result = deliver(args.endpoint, args.token_file, payload, args.sites_bypass_token_file)
     print(json.dumps(result, separators=(",", ":")))
     return 0 if result["ok"] else 1

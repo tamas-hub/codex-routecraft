@@ -2,6 +2,16 @@
 
 RouteCraftは、**Solを設計・統合・最終判断に残し、実装だけを必要に応じてLuna/Terraへ振り分け、過去に獲得した判断を次のCodexへ相続する**オーケストレーション・プラグインです。
 
+v0.7.xの互換入口を維持しながら、責務を段階的に3つへ分離しています。
+
+| コンポーネント | 責務 | 単独利用 |
+| --- | --- | --- |
+| RouteCraft Core | Routing Hint、Host Capability、実行制御 | Memoryなしで可 |
+| Praxis Memory | Facts / Cases / Decisions / Failures / Experience / Events | Coreなしで可 |
+| Praxis Dashboard | Runtime / Routing / Memory / Usage / Eventsのsource-neutral表示 | Coreなしで可 |
+
+3者は[Common Event Schema v1と分離アーキテクチャ](docs/PRAXIS-ARCHITECTURE.ja.md)で接続します。既存の`routecraft`、Graph IR v1、RouteCraft Memory Local、Markdown Decision Store、Collector v1〜v4はCompatibility Layerとして残り、Praxisの専用SQLiteへ自動移動されません。
+
 ## RouteCraft Local Runtime 0.7.4
 
 このrepositoryには、既存のMarkdown Decision Storeとは独立したローカル製品「RouteCraft Memory Local」も含まれます。
@@ -19,7 +29,12 @@ python plugins/codex-routecraft/scripts/routecraft.py project add --name "サン
 python plugins/codex-routecraft/scripts/routecraft.py project list
 python plugins/codex-routecraft/scripts/routecraft.py loop configure --enable
 python plugins/codex-routecraft/scripts/routecraft.py ui
+python plugins/codex-routecraft/scripts/routecraft-core.py --help
+python plugins/codex-routecraft/scripts/praxis-memory.py --help
+python plugins/codex-routecraft/scripts/praxis-dashboard.py --help
 ```
+
+専用Dashboardはloopback限定・GET限定の観測入口です。既存の`praxis-events.jsonl`または`praxis-memory.sqlite3`だけを読み、sourceがない場合にRouteCraft Memory Localや新規DBを初期化しません。OverviewはSystem Status、RouteCraft Impact、Execution、Platform Efficiencyを分離し、requested→actual、Sol offload、Ultra optimization、Memory evidence、component manifest versionを実ログから表示します。Prompt CacheはOpenAI / Codex側の指標として分離し、未観測値やA/B比較未実施の効果を推測しません。A/Bはbenchmark v2の同一`pair_id + scope_id`がON/OFFに1件ずつ揃う場合だけMEASURED evidenceとして扱い、旧v1・未pair・重複は観測値のまま比較対象外にします。
 
 macOS/Linuxでは`python`を`python3`へ読み替えます。既定dataは`~/.routecraft-memory-local/`です。Web UIは`127.0.0.1`だけで起動し、Memory Local本体はtelemetry、AI API、外部assetを使用しません。
 
@@ -36,6 +51,7 @@ routecraft loop status|configure
 routecraft backup|restore|doctor|ui
 routecraft doctor --scope health|all
 routecraft collector collect
+routecraft routing plan|capabilities
 routecraft graph plan|validate|run|resume|status|cancel|export
 routecraft policy status|candidates
 routecraft context engine --project <ID>
@@ -45,6 +61,8 @@ routecraft benchmark
 routecraft update --apply
 routecraft migrate local-db|decision-store|endpoint
 ```
+
+既存MemoryをPraxisへコピーする場合は、まずdry-runで件数とconflictを確認し、`--apply --confirm MIGRATE`を明示します。移行元は変更せず、既存targetがある場合は事前backupを作成します。詳細は[Migration手順](docs/PRAXIS-ARCHITECTURE.ja.md#memory-migration)を参照してください。
 
 0.7.4は、0.7のGraph IR v1、fail-closed compiler、Evidence Gate、専用SQLite Graph State Store、hash-chain checkpoint、resume、Selective Retry、Verified Constraint、Policy Labを維持します。加えて、安全なReal Agent Benchmarkのcredential分離を証明できないnative Windowsでは、認証参照・credential複製・UAC/helper setup・artifact作成・model呼出しより前にfail closedします。deterministic benchmark、Graph observe、Doctor、Security validation、0.6 Single Node Fast PathはWindowsでも継続します。Real Agent runはmacOS、Linux、利用可能なWSL2または専用VMでmodel-free isolation preflightに合格した場合だけ許可します。既定modeは`observe`で、実証済みtask classだけをallowlistで`enforce`できます。Unified Collectorはschema v1〜v3を維持し、v4のprivacy-safe Graph／Benchmark／Security集計だけを追加します。prompt・会話・source／file本文・Memory／Decision本文・path・credential・raw node outputは送信しません。取得不能値はlocal／schema v4 evidenceでは`null`であり、0へ置換しません。legacy D1 schema v3の`benchmark_runs`はmetric列が`NOT NULL`のため、取得不能summaryはlegacy row自体を送らず、偽の0を作りません。`CONTROL_CENTER_ENABLED`が未設定またはfalseでもLocal Runtimeは単独で動きます。
 

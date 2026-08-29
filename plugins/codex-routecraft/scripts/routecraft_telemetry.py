@@ -34,6 +34,18 @@ VALID_SKIP_REASONS = {
     "store_unavailable",
     "task_cancelled",
 }
+VALID_VERIFICATION_SETTINGS = {"auto_min", "none", "min", "strict", "release"}
+VALID_VERIFICATION_BUDGETS = {"none", "min", "strict", "release"}
+VALID_VERIFICATION_STATUSES = {"pass", "fail", "skipped", "not_required", "unknown"}
+VALID_EVENT_CLASSIFICATIONS = {
+    "normal", "token_burn_event", "reset_expectation", "benchmark_event",
+    "migration_event", "stress_test", "manual_override",
+}
+VERIFICATION_COUNT_KEYS = (
+    "tests_run", "targeted_tests", "full_suites", "builds", "lint_runs", "typechecks",
+    "e2e_runs", "avoided_full_suites", "avoided_e2e", "avoided_builds", "avoided_lint",
+    "avoided_typechecks", "verification_duration_ms",
+)
 
 
 @dataclass(frozen=True)
@@ -252,6 +264,80 @@ def routecraft_memory_markers(path: Path) -> list[dict[str, Any]]:
     return sorted(markers, key=lambda item: str(item["completed_at"]))
 
 
+def parse_verification_marker(text: str) -> dict[str, Any] | None:
+    """Parse a finite assistant-only verification marker without retaining text."""
+    lines = text.splitlines()
+    marker: dict[str, str] | None = None
+    for index, line in enumerate(lines):
+        if line.strip() != "ROUTECRAFT VERIFICATION":
+            continue
+        candidate: dict[str, str] = {}
+        for body_line in lines[index + 1:index + 28]:
+            if body_line.strip() == "END ROUTECRAFT VERIFICATION":
+                marker = candidate
+                break
+            if ":" not in body_line:
+                marker = None
+                break
+            key, value = body_line.split(":", 1)
+            key = key.strip()
+            if key in candidate:
+                marker = None
+                break
+            candidate[key] = value.strip()
+        if marker is not None:
+            break
+    required = {
+        "task_class", "task_summary", "setting", "budget", "status", "reason",
+        "event_classification", *VERIFICATION_COUNT_KEYS,
+    }
+    if marker is None or set(marker) != required:
+        return None
+    task_class = marker["task_class"].lower()
+    task_summary = safe_task_summary(marker["task_summary"])
+    setting = marker["setting"].lower()
+    budget = marker["budget"].lower()
+    status = marker["status"].lower()
+    reason = marker["reason"].lower()
+    event_classification = marker["event_classification"].lower()
+    if task_class not in VALID_TASK_CLASSES or task_summary is None:
+        return None
+    if setting not in VALID_VERIFICATION_SETTINGS or budget not in VALID_VERIFICATION_BUDGETS or status not in VALID_VERIFICATION_STATUSES:
+        return None
+    if event_classification not in VALID_EVENT_CLASSIFICATIONS or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", reason):
+        return None
+    counts: dict[str, int] = {}
+    for key in VERIFICATION_COUNT_KEYS:
+        value = marker[key]
+        if not re.fullmatch(r"\d{1,10}", value):
+            return None
+        counts[key] = int(value)
+    if counts["targeted_tests"] > counts["tests_run"] or budget == "none" and any(counts[key] for key in ("tests_run", "targeted_tests", "full_suites", "builds", "lint_runs", "typechecks", "e2e_runs")):
+        return None
+    return {
+        "task_class": task_class, "task_summary": task_summary, "setting": setting,
+        "budget": budget, "status": status, "reason": reason,
+        "event_classification": event_classification, **counts,
+    }
+
+
+def routecraft_verification_markers(path: Path) -> list[dict[str, Any]]:
+    markers: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                row = read_json_line(line)
+                if row is None:
+                    continue
+                parsed = parse_verification_marker(response_item_text(row))
+                completed = parse_time(str(row.get("timestamp") or ""))
+                if parsed is not None and completed is not None:
+                    markers.append({**parsed, "completed_at": completed.isoformat().replace("+00:00", "Z")})
+    except OSError:
+        pass
+    return sorted(markers, key=lambda item: str(item["completed_at"]))
+
+
 def marker_for_run(markers: list[dict[str, Any]], started_at: str) -> dict[str, Any] | None:
     started = parse_time(started_at)
     if started is None:
@@ -437,6 +523,32 @@ def collect_memory_tasks(
                 "memory_useful_count": marker["memory_useful_count"],
                 "memory_learn_status": marker["memory_learn_status"],
                 "memory_skip_reason": marker["memory_skip_reason"],
+                "completed_at": completed_at,
+                "observed_at": observed_at,
+            })
+    return sorted(tasks, key=lambda item: item["completed_at"], reverse=True)
+
+
+def collect_verification_tasks(
+    sessions_dir: Path,
+    codex_home: Path,
+    since_days: int | None,
+) -> list[dict[str, Any]]:
+    sessions = index_sessions(sessions_dir, since_days)
+    salt = device_salt(codex_home)
+    device_id = stable_hash("device", salt)
+    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    tasks: list[dict[str, Any]] = []
+    for meta in sessions.values():
+        if not has_routecraft_plan(meta.path):
+            continue
+        for index, marker in enumerate(routecraft_verification_markers(meta.path)):
+            completed_at = str(marker["completed_at"])
+            tasks.append({
+                "verification_task_id": stable_hash(f"verification|{meta.session_id}|{completed_at}|{index}", salt),
+                "parent_run_id": stable_hash(meta.session_id, salt),
+                "device_id": device_id,
+                **{key: value for key, value in marker.items() if key != "completed_at"},
                 "completed_at": completed_at,
                 "observed_at": observed_at,
             })

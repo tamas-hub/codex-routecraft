@@ -1,5 +1,22 @@
 # Changelog
 
+## RouteCraft Core 0.8.0 - 2026-08-29
+
+- Added Verification Budget selection with `NONE`, `MIN`, `STRICT`, and explicit-only `RELEASE`; the default `Auto/MIN` evaluates task class, change scope, and risk without automatically running a repository-wide suite.
+- Added the `/test none|min|strict|release` orchestration override, finite stop conditions, normal `SKIPPED` / `NOT REQUIRED` outcomes, and separate observed versus avoided check counts.
+- Added privacy-bounded parent-task verification markers, additive Collector schema v5, and a future-compatible verification summary in RouteCraft Core outcome records for Praxis Memory.
+- Added Verification and Version History surfaces to the owner-only RouteCraft Control Center, with special-event segmentation and Confirmed / Reconstructed / Approximate evidence labels.
+- Unified the former Xserver Observatory viewing surface into the GPT Site Control Center while retaining collection/API and private-data boundaries.
+
+## Unreleased - v0.7.x responsibility separation
+
+- Added an additive RouteCraft Core API with explicit `native`, `advisory`, `routecraft`, and `legacy` routing modes plus a versioned tri-state Host Capability Registry.
+- Added independent Praxis Memory and Praxis Dashboard packages connected through Common Event Schema v1 without changing the existing Memory Local, Decision Store, Graph, Collector v1-v4, or Control Center persistence contracts.
+- Added evidence-first RouteCraft Impact projections for requested-to-actual routing, Sol offload, Ultra optimization, decision attribution, Memory evidence, Platform prompt caching, component manifests, and future ON/OFF benchmark fields; unknown and counterfactual values remain unavailable rather than inferred.
+- Added backward-compatible nested benchmark schema v2 pairing (`pair_id` + `scope_id`); only exact one-to-one ON/OFF evidence can be labeled measured, while legacy v1, unpaired, duplicate, missing, and counterfactual values remain observed or unavailable.
+- Added dry-run-first, backup-aware migration from RouteCraft Memory Local and the Markdown Decision Store into a physically separate Praxis SQLite database.
+- Preserved the unified `routecraft` compatibility surface while providing standalone component launchers for installations that need only Core, Memory, or Dashboard.
+
 ## RouteCraft Local Runtime 0.7.4 - 2026-08-25
 
 - Supersede the CI-rejected `v0.7.3` source tag without rewriting release history. Versions 0.7.1 through 0.7.3 were not installed into the production Plugin.

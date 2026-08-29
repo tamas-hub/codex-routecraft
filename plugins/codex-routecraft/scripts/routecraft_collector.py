@@ -25,7 +25,8 @@ from typing import Callable, Mapping
 
 import routecraft_telemetry
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+V4_SCHEMA_VERSION = 4
 V3_SCHEMA_VERSION = 3
 MAX_COLLECTION = 500
 # Graph detail is one coherent run bundle, not a generic historical family.
@@ -85,8 +86,10 @@ GRAPH_EVENT_KEYS = {"graph_event_id", "graph_run_id", "device_id", "observed_at"
 POLICY_CANDIDATE_KEYS = {"policy_candidate_id", "device_id", "observed_at", "base_policy_version", "candidate_version", "candidate_change_kind", "sample_size", "confidence", "expected_benefit", "known_risk", "status"}
 SECURITY_RULE_METRIC_KEYS = {"security_rule_metric_id", "device_id", "observed_at", "ruleset_version", "rule_id", "true_positive", "true_negative", "false_positive", "false_negative", "fixture_coverage", "detection_rate", "false_positive_rate", "confidence", "status"}
 LEGACY_COMPONENT_KEYS = {"component_observation_id", "device_id", "observed_at", "component_kind", "status", "replacement_kind", "enabled", "running", "observation_cycles", "consecutive_healthy_cycles", "last_error_at", "missing_snapshots", "duplicate_ingestions", "replacement_health", "confidence"}
+VERIFICATION_TASK_KEYS = {"verification_task_id", "parent_run_id", "device_id", "task_class", "task_summary", "setting", "budget", "status", "reason", "tests_run", "targeted_tests", "full_suites", "builds", "lint_runs", "typechecks", "e2e_runs", "avoided_full_suites", "avoided_e2e", "avoided_builds", "avoided_lint", "avoided_typechecks", "verification_duration_ms", "event_classification", "completed_at", "observed_at"}
 FAMILY_KEYS = {"device_health": DEVICE_HEALTH_KEYS, "memory_metrics": MEMORY_METRICS_KEYS, "usage_snapshots": USAGE_SNAPSHOT_KEYS, "benchmark_runs": BENCHMARK_RUN_KEYS, "security_scans": SECURITY_SCAN_KEYS, "system_status": SYSTEM_STATUS_KEYS}
 V4_FAMILY_KEYS = {**FAMILY_KEYS, "benchmark_metric_evidence": BENCHMARK_METRIC_EVIDENCE_KEYS, "security_validations": SECURITY_VALIDATION_KEYS, "graph_runs": GRAPH_RUN_KEYS, "graph_node_metrics": GRAPH_NODE_METRIC_KEYS, "graph_events": GRAPH_EVENT_KEYS, "policy_candidates": POLICY_CANDIDATE_KEYS, "security_rule_metrics": SECURITY_RULE_METRIC_KEYS, "legacy_components": LEGACY_COMPONENT_KEYS}
+V5_FAMILY_KEYS = {**V4_FAMILY_KEYS, "verification_tasks": VERIFICATION_TASK_KEYS}
 RUN_BASE_KEYS = {
     "run_id", "parent_run_id", "device_id", "route_family", "role", "human_model", "human_effort",
     "actual_model", "actual_effort", "started_at", "ended_at", "duration_ms", "input_tokens",
@@ -183,9 +186,9 @@ def _git_state(root: Path) -> tuple[bool, int, int, int]:
 def _plugin_version(source_root: Path) -> str:
     try:
         manifest = json.loads((source_root / "plugins" / "codex-routecraft" / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        return _label(manifest.get("version"), "0.7.4")
+        return _label(manifest.get("version"), "0.8.0")
     except (OSError, ValueError, json.JSONDecodeError):
-        return "0.7.4"
+        return "0.8.0"
 
 
 def _file_digest(path: Path) -> str | None:
@@ -277,7 +280,7 @@ def _run_app_server(command: list[str]) -> Mapping[str, object]:
                 return payload["result"]
 
     try:
-        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.7.4"}}})
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "routecraft-local", "version": "0.8.0"}}})
         receive(1)
         send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         send({"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}})
@@ -832,7 +835,7 @@ def _valid_memory_task(row: Mapping[str, object]) -> bool:
 
 
 def _valid_family(name: str, row: Mapping[str, object]) -> bool:
-    keys = V4_FAMILY_KEYS.get(name)
+    keys = V5_FAMILY_KEYS.get(name)
     if keys is None or set(row) != keys or any(key in _RAW_KEYS for key in row):
         return False
     identities = {
@@ -842,10 +845,26 @@ def _valid_family(name: str, row: Mapping[str, object]) -> bool:
         "graph_runs": "graph_run_id", "graph_node_metrics": "node_metric_id", "graph_events": "graph_event_id",
         "policy_candidates": "policy_candidate_id", "security_rule_metrics": "security_rule_metric_id",
         "legacy_components": "component_observation_id",
+        "verification_tasks": "verification_task_id",
     }
     identity_key = identities[name]
     if not _valid_id(row.get(identity_key)) or not _valid_id(row.get("device_id")) or not isinstance(row.get("observed_at"), str) or not _TIMESTAMP.fullmatch(row["observed_at"]):
         return False
+    if name == "verification_tasks":
+        counts = routecraft_telemetry.VERIFICATION_COUNT_KEYS
+        return (
+            _valid_id(row["parent_run_id"])
+            and row["task_class"] in routecraft_telemetry.VALID_TASK_CLASSES
+            and _valid_summary(row["task_summary"])
+            and row["setting"] in routecraft_telemetry.VALID_VERIFICATION_SETTINGS
+            and row["budget"] in routecraft_telemetry.VALID_VERIFICATION_BUDGETS
+            and row["status"] in routecraft_telemetry.VALID_VERIFICATION_STATUSES
+            and _valid_token(row["reason"])
+            and all(_valid_count(row[key]) for key in counts)
+            and row["targeted_tests"] <= row["tests_run"]
+            and row["event_classification"] in routecraft_telemetry.VALID_EVENT_CLASSIFICATIONS
+            and _timestamp(row["completed_at"]) is not None
+        )
     if name == "device_health":
         return row["os_family"] in _OS_FAMILY and isinstance(row["online"], bool) and _valid_label(row["routecraft_version"]) and row["plugin_health"] in _HEALTH and row["hook_health"] in _HEALTH and all(_valid_count(row[key]) for key in ("agents_healthy", "agents_total", "git_ahead", "git_behind", "git_conflicts")) and row["agents_healthy"] <= row["agents_total"] and isinstance(row["git_clean"], bool) and isinstance(row["memory_git_clean"], bool) and (row["last_sync_at"] is None or _timestamp(row["last_sync_at"]) is not None)
     if name == "memory_metrics":
@@ -986,7 +1005,7 @@ def validate_v3(payload: Mapping[str, object]) -> bool:
 
 def validate_v4(payload: Mapping[str, object]) -> bool:
     allowed = {"schema_version", "runs", "memory_tasks", *V4_FAMILY_KEYS}
-    if set(payload) != allowed or payload.get("schema_version") != SCHEMA_VERSION or not isinstance(payload.get("runs"), list) or not isinstance(payload.get("memory_tasks"), list):
+    if set(payload) != allowed or payload.get("schema_version") != V4_SCHEMA_VERSION or not isinstance(payload.get("runs"), list) or not isinstance(payload.get("memory_tasks"), list):
         return False
     if any(not isinstance(row, Mapping) or not _valid_run(row) for row in payload["runs"]):
         return False
@@ -1002,8 +1021,28 @@ def validate_v4(payload: Mapping[str, object]) -> bool:
     return True
 
 
+def validate_v5(payload: Mapping[str, object]) -> bool:
+    allowed = {"schema_version", "runs", "memory_tasks", *V5_FAMILY_KEYS}
+    if set(payload) != allowed or payload.get("schema_version") != SCHEMA_VERSION or not isinstance(payload.get("runs"), list) or not isinstance(payload.get("memory_tasks"), list):
+        return False
+    if any(not isinstance(row, Mapping) or not _valid_run(row) for row in payload["runs"]):
+        return False
+    if any(not isinstance(row, Mapping) or not _valid_memory_task(row) for row in payload["memory_tasks"]):
+        return False
+    for name in V5_FAMILY_KEYS:
+        rows = payload.get(name)
+        if not isinstance(rows, list) or len(rows) > MAX_COLLECTION or any(not isinstance(row, Mapping) or not _valid_family(name, row) for row in rows):
+            return False
+    return sum(len(payload[name]) for name in _GRAPH_BUNDLE_FAMILIES) <= MAX_GRAPH_BUNDLE_ROWS
+
+
 def validate_payload(payload: Mapping[str, object]) -> bool:
-    return validate_v3(payload) if payload.get("schema_version") == V3_SCHEMA_VERSION else validate_v4(payload)
+    version = payload.get("schema_version")
+    if version == V3_SCHEMA_VERSION:
+        return validate_v3(payload)
+    if version == V4_SCHEMA_VERSION:
+        return validate_v4(payload)
+    return validate_v5(payload)
 
 
 def payload_batches(payload: Mapping[str, object], size: int = 400) -> list[dict[str, object]]:
@@ -1026,7 +1065,7 @@ def payload_batches(payload: Mapping[str, object], size: int = 400) -> list[dict
             "runs": runs[index * size:(index + 1) * size],
             "memory_tasks": memory_tasks[index * size:(index + 1) * size],
         }
-        families = FAMILY_KEYS if payload["schema_version"] == V3_SCHEMA_VERSION else V4_FAMILY_KEYS
+        families = FAMILY_KEYS if payload["schema_version"] == V3_SCHEMA_VERSION else V4_FAMILY_KEYS if payload["schema_version"] == V4_SCHEMA_VERSION else V5_FAMILY_KEYS
         for name in families:
             batch[name] = payload[name] if index == 0 else []
         if not validate_payload(batch):
@@ -1271,7 +1310,7 @@ def collect_v4(
     }
     payload = {
         **v3,
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": V4_SCHEMA_VERSION,
         **{family: _summary_rows(path, family, device_id) for family, path in paths.items()},
     }
     canonical_graph_bundle = graph_bundle_result or home / "routecraft" / "graph" / "latest-collector-v4.json"
@@ -1294,7 +1333,7 @@ def collect_v4(
         return payload
     fallback = {
         **fixture_payload(),
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": V4_SCHEMA_VERSION,
         "benchmark_metric_evidence": [],
         "security_validations": [],
         "graph_runs": [],
@@ -1320,7 +1359,7 @@ def fixture_payload() -> dict[str, object]:
 def fixture_payload_v4() -> dict[str, object]:
     payload = {
         **fixture_payload(),
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": V4_SCHEMA_VERSION,
         "benchmark_metric_evidence": [],
         "security_validations": [],
         "graph_runs": [],
@@ -1331,6 +1370,37 @@ def fixture_payload_v4() -> dict[str, object]:
         "legacy_components": [],
     }
     payload["system_status"][0]["collector_version"] = "4.0.0"
+    return payload
+
+
+def collect_v5(**kwargs: object) -> dict[str, object]:
+    """Add parent-task Verification Budget observations without changing v4 rows."""
+    home = kwargs.get("codex_home")
+    codex_home = home if isinstance(home, Path) else Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    sessions = kwargs.get("sessions_dir")
+    sessions_dir = sessions if isinstance(sessions, Path) else codex_home / "sessions"
+    since_days = kwargs.get("since_days", 30)
+    v4 = collect_v4(**kwargs)
+    try:
+        verification_tasks = routecraft_telemetry.collect_verification_tasks(sessions_dir, codex_home, since_days if isinstance(since_days, int) or since_days is None else 30)
+    except Exception:
+        verification_tasks = []
+    payload = {**v4, "schema_version": SCHEMA_VERSION, "verification_tasks": verification_tasks}
+    statuses = payload.get("system_status")
+    if isinstance(statuses, list):
+        for status in statuses:
+            if isinstance(status, dict):
+                status["collector_version"] = "5.0.0"
+    if validate_v5(payload):
+        return payload
+    fallback = {**fixture_payload_v4(), "schema_version": SCHEMA_VERSION, "verification_tasks": []}
+    fallback["system_status"][0]["collector_version"] = "5.0.0"
+    return fallback
+
+
+def fixture_payload_v5() -> dict[str, object]:
+    payload = {**fixture_payload_v4(), "schema_version": SCHEMA_VERSION, "verification_tasks": []}
+    payload["system_status"][0]["collector_version"] = "5.0.0"
     return payload
 
 
@@ -1352,14 +1422,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--legacy-result", type=Path)
     parser.add_argument("--fixture", action="store_true")
     parser.add_argument("--schema-v3", action="store_true", help="Emit the legacy v3 collector contract")
+    parser.add_argument("--schema-v4", action="store_true", help="Emit the legacy v4 collector contract")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if args.fixture:
-        payload = fixture_payload() if args.schema_v3 else fixture_payload_v4()
+        payload = fixture_payload() if args.schema_v3 else fixture_payload_v4() if args.schema_v4 else fixture_payload_v5()
     elif args.schema_v3:
         payload = collect_v3(source_root=args.source_root, data_dir=args.data_dir, sessions_dir=args.sessions_dir, since_days=args.since_days, benchmark_result=args.benchmark_result)
-    else:
+    elif args.schema_v4:
         payload = collect_v4(
+            source_root=args.source_root,
+            data_dir=args.data_dir,
+            sessions_dir=args.sessions_dir,
+            since_days=args.since_days,
+            benchmark_result=args.benchmark_result,
+            benchmark_evidence_result=args.benchmark_evidence_result,
+            security_validation_result=args.security_validation_result,
+            graph_bundle_result=args.graph_bundle_result,
+            graph_result=args.graph_result,
+            graph_node_result=args.graph_node_result,
+            graph_event_result=args.graph_event_result,
+            policy_candidate_result=args.policy_candidate_result,
+            security_rule_result=args.security_rule_result,
+            legacy_result=args.legacy_result,
+        )
+    else:
+        payload = collect_v5(
             source_root=args.source_root,
             data_dir=args.data_dir,
             sessions_dir=args.sessions_dir,

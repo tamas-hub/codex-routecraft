@@ -1,0 +1,10 @@
+{
+  "schema_version": "1",
+  "component": "praxis-dashboard",
+  "display_name": "Praxis Dashboard",
+  "version": "0.2.0",
+  "interfaces": [
+    {"name": "common-event", "schema_version": "1"},
+    {"name": "routecraft-telemetry", "schema_version": "1"}
+  ]
+}

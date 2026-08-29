@@ -40,6 +40,36 @@ chmod +x ./routecraft
 
 未署名のshell scriptのため、macOSが初回確認を表示する場合があります。内容はテキストとして確認でき、ネットワーク公開や管理者権限を必要としません。配布元と同梱SHA256を確認してから実行してください。
 
+## 分離コンポーネント
+
+従来の`routecraft`はCompatibility Layerとしてそのまま利用できます。必要な責務だけを確認・起動する場合は、`app`内の独立launcherを使用します。
+
+### Windows
+
+```powershell
+.\app\routecraft-core.ps1 --help
+.\app\praxis-memory.ps1 --help
+.\app\praxis-dashboard.ps1 --help
+```
+
+### macOS
+
+```sh
+./app/routecraft-core.sh --help
+./app/praxis-memory.sh --help
+./app/praxis-dashboard.sh --help
+```
+
+Praxis Memoryは既存Memory Local DBやMarkdown Decision Storeと別のSQLiteを使います。移行はdry-runが既定で、apply時だけ`--apply --confirm MIGRATE`を指定します。詳細は`docs/PRAXIS-ARCHITECTURE.ja.md`を参照してください。
+
+Praxis Dashboardは既存のPraxis JSONL/SQLiteを読み取り専用で開きます。sourceがない場合もDB、lock、backupを作らず、`127.0.0.1`のGET APIだけを公開します。配布ZIPには各component manifestとPlugin manifestも含まれ、DashboardはCore、Memory、Dashboard、Collector、Telemetry Schemaのversionを実行時に解決します。取得不能値は`unknown`のまま表示します。
+
+既存launcherから副作用なしのrouting planだけを確認することもできます。
+
+```powershell
+.\routecraft.ps1 --json routing plan --task "互換確認" --mode advisory
+```
+
 ## デモデータ
 
 最初にprojectを登録し、表示されたIDを指定します。

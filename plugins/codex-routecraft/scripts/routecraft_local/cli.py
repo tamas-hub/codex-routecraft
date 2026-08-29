@@ -639,6 +639,23 @@ def build_parser() -> argparse.ArgumentParser:
     collector_collect.add_argument("--since-days", type=int, default=30)
     _add_json_flag(collector_collect)
 
+    routing = commands.add_parser("routing", help="RouteCraft Core v1 の副作用なしrouting plan")
+    routing_commands = routing.add_subparsers(dest="routing_command", required=True)
+    routing_capabilities = routing_commands.add_parser("capabilities", help="宣言済みhost capabilityを表示")
+    routing_capabilities.add_argument("--registry", help="Host Capability Registry v1 JSON")
+    _add_json_flag(routing_capabilities)
+    routing_plan = routing_commands.add_parser("plan", help="dispatchせずrouting planを作成")
+    routing_plan.add_argument("--task", required=True)
+    routing_plan.add_argument("--task-id")
+    routing_plan.add_argument("--project")
+    routing_plan.add_argument("--mode", default="legacy", choices=("native", "advisory", "routecraft", "legacy"))
+    routing_plan.add_argument("--provider")
+    routing_plan.add_argument("--host")
+    routing_plan.add_argument("--model")
+    routing_plan.add_argument("--config", help="routing config JSON object")
+    routing_plan.add_argument("--registry", help="Host Capability Registry v1 JSON")
+    _add_json_flag(routing_plan)
+
     graph = commands.add_parser("graph", help="Execution Graph deterministic engine")
     graph_commands = graph.add_subparsers(dest="graph_command", required=True)
     graph_mode = graph_commands.add_parser("mode", help="[legacy 0.6 adapter] off/observe only; enforce is never authorized")
@@ -828,6 +845,46 @@ def _bool_filter(value: str) -> bool | None:
     return None if value == "any" else value == "yes"
 
 
+def _handle_routing(args: argparse.Namespace, json_mode: bool) -> int:
+    """Handle the offline planner without initializing Memory Local."""
+    from routecraft_core import HostCapabilityRegistry, RoutingRequest, plan_route
+
+    registry_value = {"schema_version": "1", "providers": []}
+    if args.registry:
+        registry_value = json.loads(Path(args.registry).read_text(encoding="utf-8-sig"))
+        if not isinstance(registry_value, dict):
+            raise RouteCraftLocalError("Host Capability Registry はJSON objectでなければなりません。")
+    try:
+        registry = HostCapabilityRegistry.from_mapping(registry_value)
+    except (TypeError, ValueError) as exc:
+        raise RouteCraftLocalError("Host Capability Registry v1が不正です。") from exc
+    if args.routing_command == "capabilities":
+        result = {"api_version": "1", "registry": registry.to_dict()}
+    else:
+        config: dict[str, Any] = {}
+        if args.config:
+            parsed = json.loads(Path(args.config).read_text(encoding="utf-8-sig"))
+            if not isinstance(parsed, dict):
+                raise RouteCraftLocalError("routing configはJSON objectでなければなりません。")
+            config = parsed
+        try:
+            request = RoutingRequest(
+                task=args.task,
+                task_id=args.task_id,
+                project=args.project,
+                mode=args.mode,
+                provider=args.provider,
+                host=args.host,
+                model=args.model,
+                config=config,
+            )
+            result = plan_route(request, registry).to_dict()
+        except (TypeError, ValueError) as exc:
+            raise RouteCraftLocalError("routing requestが不正です。") from exc
+    _emit(result, json_mode=json_mode)
+    return 0
+
+
 def _handle(args: argparse.Namespace, service: RouteCraftService, json_mode: bool) -> int:
     command = args.command
     if command == "init":
@@ -853,6 +910,9 @@ def _handle(args: argparse.Namespace, service: RouteCraftService, json_mode: boo
         state = "enabled" if result["enabled"] else "disabled"
         _emit(result, json_mode=json_mode, human=f"RouteCraft Memory Local Loop integration: {state}")
         return 0
+
+    if command == "routing":
+        return _handle_routing(args, json_mode)
 
     service.initialize()
 

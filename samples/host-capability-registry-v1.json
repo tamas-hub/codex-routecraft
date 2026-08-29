@@ -1,0 +1,30 @@
+{
+  "schema_version": "1",
+  "providers": [
+    {
+      "provider": "example_provider",
+      "capabilities": {
+        "available": null,
+        "native_routing": null
+      },
+      "hosts": [
+        {
+          "host": "example_host",
+          "capabilities": {
+            "native_routing": null,
+            "tool_dispatch": null
+          },
+          "models": [
+            {
+              "model": "example_model",
+              "capabilities": {
+                "available": null,
+                "structured_output": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

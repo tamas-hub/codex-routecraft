@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "component": "routecraft-core",
+  "display_name": "RouteCraft Core",
+  "version_source": "../../.codex-plugin/plugin.json#/version",
+  "interfaces": [
+    {"name": "routing-core", "api_version": "1"},
+    {"name": "routecraft-telemetry", "schema_version": "1"},
+    {"name": "verification-budget", "schema_version": "1"}
+  ]
+}

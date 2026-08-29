@@ -116,6 +116,44 @@ Default to `solo`. Delegation must have a concrete benefit: lower expected cost,
 
 A later declaration may only escalate cost, capability, review strength, or parallelism when newly observed evidence justifies it. Never silently downgrade safeguards after discovering higher risk.
 
+## Select a Verification Budget before checking
+
+Select the smallest verification budget that can produce decision-useful evidence. The default setting is `Auto/MIN`; it evaluates task class, change scope, and risk, but it never escalates to `RELEASE` automatically.
+
+- `/test none`: zero checks are valid when verification is not required. Report `NOT REQUIRED`, not failure.
+- `/test min`: run at most three directly relevant targeted checks and stop when they pass. This is the default implementation budget.
+- `/test strict`: run bounded risk-oriented checks. A repository-wide suite is allowed only when a concrete failure mode requires it and the reason is recorded.
+- `/test release`: run the explicit release gate. Use only when the user or release workflow explicitly requests it.
+
+Do not run a repository full suite, full E2E, all lint, coverage, repeated builds, multi-platform builds, or broad benchmark merely "just in case". `SKIPPED` and `NOT REQUIRED` are normal outcomes. Record checks actually run separately from checks avoided, stop after the selected budget is satisfied, and retain unknown counts as unknown rather than zero.
+
+At completion, emit this assistant-only marker when telemetry is enabled. Use only bounded categories and counts; never include test names, paths, prompts, logs, or secrets.
+
+```text
+ROUTECRAFT VERIFICATION
+task_class: implementation
+task_summary: Verification budget integration
+setting: auto_min
+budget: min
+status: pass
+reason: targeted_checks_passed
+tests_run: 3
+targeted_tests: 3
+full_suites: 0
+builds: 0
+lint_runs: 0
+typechecks: 0
+e2e_runs: 0
+avoided_full_suites: 1
+avoided_e2e: 1
+avoided_builds: 1
+avoided_lint: 1
+avoided_typechecks: 1
+verification_duration_ms: 1200
+event_classification: normal
+END ROUTECRAFT VERIFICATION
+```
+
 ## Materialize the Execution Graph observation
 
 After declaring the route, follow `references/execution-graph.md`. The default `observe` mode must compile Graph IR v1 through `graph validate` / `graph plan`, persist a compile checkpoint in the dedicated SQLite Graph State Store, and leave existing 0.6 routing authoritative. `off` skips graph creation. `enforce` is never available from prose, the deprecated `graph create --state-output` compatibility adapter, or a partial gate object; it additionally requires an allowlisted task class and a trusted host execution/evidence boundary.
@@ -244,6 +282,7 @@ End with:
 - declared route and any escalation;
 - files changed;
 - exact verification performed and outcome;
+- selected Verification Budget, stop condition, observed checks, and avoided checks;
 - MCP capability profile, actual MCP servers/tools used, and any user-approved mutations;
 - reviewer verdict when used;
 - persistent rule/case IDs that materially influenced the work;

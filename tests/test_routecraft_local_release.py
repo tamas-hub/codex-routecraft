@@ -86,6 +86,24 @@ class RouteCraftLocalReleaseTests(unittest.TestCase):
                     self.assertTrue(any(name.endswith("/app/routecraft_legacy_observation.py") for name in names))
                     self.assertTrue(any(name.endswith("/app/routecraft_real_benchmark.py") for name in names))
                     self.assertTrue(any(name.endswith("/app/routecraft_security_validation.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_core/routing.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_protocols/telemetry.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/routecraft_protocols/__init__.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/praxis_memory/__init__.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/praxis_dashboard/__init__.py") for name in names))
+                    self.assertTrue(any(name.endswith("/app/praxis_dashboard/assets/index.html") for name in names))
+                    self.assertTrue(any(name.endswith("/app/praxis_dashboard/assets/styles.css") for name in names))
+                    self.assertTrue(any(name.endswith("/app/praxis_dashboard/assets/app.js") for name in names))
+                    self.assertTrue(any(name.endswith("/.codex-plugin/plugin.json") for name in names))
+                    for component in (
+                        "routecraft-core",
+                        "praxis-memory",
+                        "praxis-dashboard",
+                        "collector",
+                        "telemetry-schema",
+                    ):
+                        self.assertTrue(any(name.endswith(f"/components/{component}/manifest.json") for name in names))
+                    self.assertTrue(any(name.endswith("/docs/PRAXIS-ARCHITECTURE.ja.md") for name in names))
                     self.assertTrue(any(name.endswith("/docs/HARDENING_GRAPH_FOUNDATION.ja.md") for name in names))
                     self.assertTrue(any(name.endswith("/docs/ADR-0007-EVIDENCE-DRIVEN-DURABLE-GRAPH.ja.md") for name in names))
                     for name in archive.namelist():
@@ -117,6 +135,9 @@ class RouteCraftLocalReleaseTests(unittest.TestCase):
             launcher = root / "app" / "routecraft.py"
             version = self.run_python(str(launcher), "--version", cwd=root)
             self.assertEqual("routecraft 0.7.4 (memory-local 1.0.0)", version.stdout.strip())
+            for component in ("routecraft-core.py", "praxis-memory.py", "praxis-dashboard.py"):
+                help_result = self.run_python(str(root / "app" / component), "--help", cwd=root)
+                self.assertIn("usage:", help_result.stdout.lower())
             data = base / "smoke-data"
             self.run_python(str(launcher), "--data-dir", str(data), "init", cwd=root)
             project = json.loads(

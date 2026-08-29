@@ -1,7 +1,7 @@
 {
   "name": "codex-routecraft",
-  "version": "0.7.4+codex.20260825040918",
-  "description": "Unified RouteCraft Local Runtime with evidence-driven durable execution graphs, routing, memory, quality checks, and optional Control Center telemetry.",
+  "version": "0.8.0+codex.20260828231032",
+  "description": "RouteCraft Core with Verification Budgets, separable local Praxis Memory and Praxis Dashboard, durable execution graphs, and optional Control Center telemetry.",
   "author": {
     "name": "tamas-hub",
     "url": "https://github.com/tamas-hub"
@@ -24,13 +24,17 @@
     "memory-evaluation",
     "observability",
     "durable-execution",
-    "execution-graph"
+    "execution-graph",
+    "praxis-memory",
+    "praxis-dashboard",
+    "routing-modes",
+    "verification-budget"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "RouteCraft for Codex",
-    "shortDescription": "Durable local execution graphs, adaptive routing, memory, quality, and optional telemetry.",
-    "longDescription": "RouteCraft for Codex is the unified Local Runtime for Sol-led routing, evidence-driven durable execution graphs, bounded companion-agent delegation, checkpoints and resume, selective retry, hooks, local project continuity, private reusable decisions, diagnostics, benchmark execution, and safe security checks. The 0.6 single-node fast path remains available. Core behavior remains fully supported without the separately versioned RouteCraft Control Center Add-on. When explicitly enabled, the privacy-filtered Collector sends only versioned aggregate telemetry; Control Center downtime never blocks graph execution, routing, hooks, agents, memory, benchmark execution, or security scans.",
+    "shortDescription": "Separable routing core, private experience memory, local dashboard, durable graphs, and optional telemetry.",
+    "longDescription": "RouteCraft for Codex keeps one compatible Local Runtime while exposing three additive boundaries: RouteCraft Core for routing hints, Verification Budget selection, and execution control; Praxis Memory for independent local experience data; and Praxis Dashboard for source-neutral versioned event projection. It also provides Sol-led orchestration, evidence-driven durable execution graphs, bounded companion-agent delegation, checkpoints and resume, selective retry, hooks, diagnostics, benchmark execution, and safe security checks. The 0.6 single-node fast path, existing Memory Local and Decision Store formats, and Collector v1-v5 remain available. Core behavior is supported without Praxis components or the separately versioned Control Center Add-on; optional delivery never blocks local execution.",
     "developerName": "tamas-hub",
     "category": "Productivity",
     "capabilities": [

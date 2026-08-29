@@ -2,6 +2,12 @@
 
 ## RouteCraft Local Runtime 0.7.4
 
+RouteCraft v0.7.x now has additive, independently usable boundaries for **RouteCraft Core**, **Praxis Memory**, and **Praxis Dashboard**. Core owns routing hints and execution control, Praxis Memory owns local experience data, and Praxis Dashboard projects source-neutral versioned events. The existing unified `routecraft` CLI, Graph IR v1, Memory Local SQLite, Markdown Decision Store, Collector v1-v4, and optional Control Center adapter remain compatibility surfaces.
+
+See the [Japanese separation architecture and migration guide](docs/PRAXIS-ARCHITECTURE.ja.md) for routing modes, API boundaries, dry-run-first migration, rollback, security, tests, and the roadmap.
+
+The compatibility CLI also exposes a side-effect-free adapter: `routecraft.py --json routing plan --task "..." --mode advisory`. Supply a declared Host Capability Registry v1 with `--registry`; absent capability facts remain `null`.
+
 This repository also contains RouteCraft Memory Local, a separate standard-library-only local product for carrying structured project decisions, failures, constraints, important files, and next actions across AI coding sessions. It uses a local SQLite database, Japanese-capable search, bounded Context Packs, six-file Handoff Packs, read-only Git metadata, confirmed backup/restore, and a Japanese-first Web UI bound only to `127.0.0.1`.
 
 It does not replace or migrate the existing Markdown Decision Store automatically. Existing Case/Candidate/Rule data remains compatible and can be imported explicitly.
@@ -11,7 +17,12 @@ python plugins/codex-routecraft/scripts/routecraft.py init
 python plugins/codex-routecraft/scripts/routecraft.py project add --name "My project" --repo /path/to/repo
 python plugins/codex-routecraft/scripts/routecraft.py loop configure --enable
 python plugins/codex-routecraft/scripts/routecraft.py ui
+python plugins/codex-routecraft/scripts/routecraft-core.py --help
+python plugins/codex-routecraft/scripts/praxis-memory.py --help
+python plugins/codex-routecraft/scripts/praxis-dashboard.py --help
 ```
+
+The dedicated Dashboard is a loopback-only, GET-only observer. It reads an existing `praxis-events.jsonl` or `praxis-memory.sqlite3` and does not initialize RouteCraft Memory Local or create a source when none exists. Its Overview separates System Status, RouteCraft Impact, Execution, and Platform Efficiency; requested-to-actual routing, Sol offload, Ultra optimization, Memory evidence, and manifest versions come from observed records, while prompt caching stays attributed to OpenAI/Codex and unavailable counterfactual effects remain unknown. A/B evidence is promoted to measured only when benchmark v2 supplies exactly one ON and one OFF record for the same privacy-bounded `pair_id` and `scope_id`; v1, unpaired, and duplicate rows remain observed-only.
 
 The opt-in Loop bridge injects a bounded Context Pack only for an explicitly registered repository and saves an unverified Git-metadata summary after a successful Stop. It never reads transcripts or auto-creates projects. The Decision Store remains the reusable Case/Rule layer; Memory Local is the project working-memory layer.
 

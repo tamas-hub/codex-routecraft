@@ -1,0 +1,18 @@
+{
+  "schema_version": "1",
+  "event": "routing.planned",
+  "event_id": "evt_example_001",
+  "timestamp": "2026-08-27T00:00:00Z",
+  "source": "routecraft_core",
+  "provider": null,
+  "agent": null,
+  "model": null,
+  "project": "routecraft",
+  "task_id": "task_example_001",
+  "status": "advisory",
+  "event_classification": "normal",
+  "metadata": {
+    "mode": "advisory",
+    "native_routing": null
+  }
+}

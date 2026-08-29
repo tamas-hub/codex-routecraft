@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "component": "telemetry-schema",
+  "display_name": "RouteCraft Telemetry Schema",
+  "version": "1.1.0",
+  "interfaces": [
+    {"name": "routecraft-telemetry", "schema_version": "1"},
+    {"name": "common-event", "schema_version": "1"},
+    {"name": "verification-task", "schema_version": "1"}
+  ]
+}

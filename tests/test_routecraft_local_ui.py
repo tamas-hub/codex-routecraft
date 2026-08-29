@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "plugins" / "codex-routecraft" / "scripts"))
 from routecraft_local.service import RouteCraftService
 from routecraft_local.ui import create_server
+from praxis_memory import PraxisMemory
+from routecraft_protocols import new_event
 
 
 class LocalUiTests(unittest.TestCase):
@@ -29,6 +31,8 @@ class LocalUiTests(unittest.TestCase):
         responsive = http.client.HTTPConnection("127.0.0.1",self.server.server_address[1]); responsive.request("GET","/responsive.css"); r=responsive.getresponse(); self.assertEqual(r.status,200); self.assertIn("text/css",r.getheader("Content-Type")); self.assertIn(b"grid-template-columns",r.read())
         r,p=self.request("POST","/api/projects",{"name":"x"}); self.assertEqual(r.status,403); self.assertFalse(p["ok"])
         r,p=self.request("GET","/api/bootstrap"); token=p["data"]["csrf_token"]
+        r,p=self.request("GET","/api/praxis/v1/snapshot"); self.assertEqual(r.status,200); self.assertFalse(p["data"]["available"])
+        r,p=self.request("POST","/api/praxis/v1/snapshot",{}, {"X-RouteCraft-CSRF":token}); self.assertEqual(r.status,400); self.assertEqual(p["error"]["code"],"request")
         denied = http.client.HTTPConnection("127.0.0.1",self.server.server_address[1]); denied.request("GET","/",headers={"Host":"evil.example"}); r=denied.getresponse(); self.assertEqual(r.status,403); p=json.loads(r.read().decode()); self.assertEqual(p["error"]["code"],"host")
         r,p=self.request("POST","/api/projects",{"name":"x"},{"X-RouteCraft-CSRF":token,"Origin":"http://evil.example"}); self.assertEqual(r.status,403); self.assertEqual(p["error"]["code"],"origin")
         r,p=self.request("POST","/api/projects",{"name":"x"},{"X-RouteCraft-CSRF":token,"Content-Type":"text/plain"}); self.assertEqual(r.status,400); self.assertEqual(p["error"]["code"],"request")
@@ -65,6 +69,26 @@ class LocalUiTests(unittest.TestCase):
             self.assertIn(f"'{action}' in b.dataset",script)
             self.assertNotIn(f"if(b.dataset.{action})",script)
         self.assertIn("d.retained_rollback",script); self.assertIn("warnings.join",script); self.assertIn("保持されたrollback",script)
+
+    def test_integrated_praxis_get_reads_existing_sqlite_without_writes(self):
+        memory = PraxisMemory(self.temp.name)
+        memory.store_event(new_event("task.started", "ui-test", event_id="evt-ui-readonly", task_id="task-ui", status="running"))
+        database = Path(self.temp.name) / "praxis-memory.sqlite3"
+        before = database.read_bytes(); modified = database.stat().st_mtime_ns
+        names = {item.name for item in Path(self.temp.name).iterdir()}
+        server = create_server(self.service, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1])
+            connection.request("GET", "/api/praxis/v1/snapshot")
+            response = connection.getresponse(); payload = json.loads(response.read().decode("utf-8")); connection.close()
+            self.assertEqual(200, response.status); self.assertTrue(payload["data"]["available"])
+            self.assertEqual(1, payload["data"]["data"]["events"]["total"])
+        finally:
+            server.shutdown(); thread.join(); server.server_close()
+        self.assertEqual(before, database.read_bytes())
+        self.assertEqual(modified, database.stat().st_mtime_ns)
+        self.assertEqual(names, {item.name for item in Path(self.temp.name).iterdir()})
 
     def test_project_archive_is_post_only_and_protected(self):
         _, bootstrap = self.request("GET", "/api/bootstrap")

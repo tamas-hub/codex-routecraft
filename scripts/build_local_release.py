@@ -15,10 +15,16 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_SCRIPTS = ROOT / "plugins" / "codex-routecraft" / "scripts"
+PLUGIN_ROOT = ROOT / "plugins" / "codex-routecraft"
+SOURCE_SCRIPTS = PLUGIN_ROOT / "scripts"
+COMPONENTS = PLUGIN_ROOT / "components"
 PACKAGE = SOURCE_SCRIPTS / "routecraft_local"
 GRAPH_PACKAGE = SOURCE_SCRIPTS / "routecraft_graph"
 DECISION_PACKAGE = SOURCE_SCRIPTS / "routecraft_memory_lib"
+PROTOCOL_PACKAGE = SOURCE_SCRIPTS / "routecraft_protocols"
+CORE_PACKAGE = SOURCE_SCRIPTS / "routecraft_core"
+PRAXIS_MEMORY_PACKAGE = SOURCE_SCRIPTS / "praxis_memory"
+PRAXIS_DASHBOARD_PACKAGE = SOURCE_SCRIPTS / "praxis_dashboard"
 RELEASE = ROOT / "release"
 SAMPLES = ROOT / "samples"
 VERSION = (RELEASE / "VERSION").read_text(encoding="utf-8").strip()
@@ -43,6 +49,9 @@ def _safe_archive_path(value: str) -> str:
 def _entries(platform_name: str) -> list[Entry]:
     runtime_scripts = (
         "routecraft.py",
+        "routecraft-core.py",
+        "praxis-memory.py",
+        "praxis-dashboard.py",
         "routecraft_agents_optimizer.py",
         "routecraft_benchmark_lab.py",
         "routecraft_collector.py",
@@ -63,6 +72,7 @@ def _entries(platform_name: str) -> list[Entry]:
     )
     common = [
         *(Entry(SOURCE_SCRIPTS / name, f"{PREFIX}/app/{name}") for name in runtime_scripts),
+        Entry(PLUGIN_ROOT / ".codex-plugin" / "plugin.json", f"{PREFIX}/.codex-plugin/plugin.json"),
         Entry(ROOT / "LICENSE", f"{PREFIX}/LICENSE"),
         Entry(ROOT / "CHANGELOG.md", f"{PREFIX}/CHANGELOG.md"),
         Entry(RELEASE / "VERSION", f"{PREFIX}/VERSION"),
@@ -77,6 +87,8 @@ def _entries(platform_name: str) -> list[Entry]:
         Entry(SAMPLES / "legacy-observation-facts.json", f"{PREFIX}/samples/legacy-observation-facts.json"),
         Entry(SAMPLES / "real-agent-benchmark-suite.json", f"{PREFIX}/samples/real-agent-benchmark-suite.json"),
         Entry(SAMPLES / "security-validation-fixtures.json", f"{PREFIX}/samples/security-validation-fixtures.json"),
+        Entry(SAMPLES / "praxis-event-v1.json", f"{PREFIX}/samples/praxis-event-v1.json"),
+        Entry(SAMPLES / "host-capability-registry-v1.json", f"{PREFIX}/samples/host-capability-registry-v1.json"),
     ]
     docs = (
         "product-spec-v1.md",
@@ -86,11 +98,25 @@ def _entries(platform_name: str) -> list[Entry]:
         "HARDENING_GRAPH_FOUNDATION.ja.md",
         "ADR-0007-EVIDENCE-DRIVEN-DURABLE-GRAPH.ja.md",
         "ROUTECRAFT-0.7-ARCHITECTURE.ja.md",
+        "PRAXIS-ARCHITECTURE.ja.md",
         "release-plan-v1.md",
         "test-plan-v1.md",
     )
     common.extend(Entry(ROOT / "docs" / name, f"{PREFIX}/docs/{name}") for name in docs)
-    for package in (PACKAGE, GRAPH_PACKAGE, DECISION_PACKAGE):
+    for path in sorted(COMPONENTS.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(COMPONENTS).as_posix()
+        common.append(Entry(path, f"{PREFIX}/components/{relative}"))
+    for package in (
+        PACKAGE,
+        GRAPH_PACKAGE,
+        DECISION_PACKAGE,
+        PROTOCOL_PACKAGE,
+        CORE_PACKAGE,
+        PRAXIS_MEMORY_PACKAGE,
+        PRAXIS_DASHBOARD_PACKAGE,
+    ):
         for path in sorted(package.rglob("*")):
             if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
                 continue
@@ -101,10 +127,20 @@ def _entries(platform_name: str) -> list[Entry]:
             [
                 Entry(RELEASE / "launchers" / "routecraft.cmd", f"{PREFIX}/routecraft.cmd"),
                 Entry(RELEASE / "launchers" / "routecraft.ps1", f"{PREFIX}/routecraft.ps1"),
+                Entry(SOURCE_SCRIPTS / "routecraft-core.ps1", f"{PREFIX}/app/routecraft-core.ps1"),
+                Entry(SOURCE_SCRIPTS / "praxis-memory.ps1", f"{PREFIX}/app/praxis-memory.ps1"),
+                Entry(SOURCE_SCRIPTS / "praxis-dashboard.ps1", f"{PREFIX}/app/praxis-dashboard.ps1"),
             ]
         )
     elif platform_name == "macos":
         common.append(Entry(RELEASE / "launchers" / "routecraft", f"{PREFIX}/routecraft", executable=True))
+        common.extend(
+            [
+                Entry(SOURCE_SCRIPTS / "routecraft-core.sh", f"{PREFIX}/app/routecraft-core.sh", executable=True),
+                Entry(SOURCE_SCRIPTS / "praxis-memory.sh", f"{PREFIX}/app/praxis-memory.sh", executable=True),
+                Entry(SOURCE_SCRIPTS / "praxis-dashboard.sh", f"{PREFIX}/app/praxis-dashboard.sh", executable=True),
+            ]
+        )
     else:  # pragma: no cover - parser controls choices
         raise ValueError(platform_name)
     return common

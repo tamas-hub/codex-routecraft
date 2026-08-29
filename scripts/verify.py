@@ -18,6 +18,11 @@ COLLECTOR_SCRIPT = PLUGIN / "scripts" / "routecraft_collector.py"
 DEVICE_SCRIPT = PLUGIN / "scripts" / "routecraft_device.py"
 LOCAL_SCRIPT = PLUGIN / "scripts" / "routecraft.py"
 LOCAL_PACKAGE = PLUGIN / "scripts" / "routecraft_local"
+PROTOCOL_PACKAGE = PLUGIN / "scripts" / "routecraft_protocols"
+CORE_PACKAGE = PLUGIN / "scripts" / "routecraft_core"
+PRAXIS_MEMORY_PACKAGE = PLUGIN / "scripts" / "praxis_memory"
+PRAXIS_DASHBOARD_PACKAGE = PLUGIN / "scripts" / "praxis_dashboard"
+COMPONENTS = PLUGIN / "components"
 LOCAL_VERSION_FILE = ROOT / "release" / "VERSION"
 LOCAL_VERSION = "1.0.0"
 
@@ -30,6 +35,13 @@ EXPECTED_AGENTS = {
     "routecraft_terra_medium.toml": ("routecraft_terra_medium", "gpt-5.6-terra", "medium"),
     "routecraft_terra_high.toml": ("routecraft_terra_high", "gpt-5.6-terra", "high"),
     "routecraft_sol_reviewer.toml": ("routecraft_sol_reviewer", "gpt-5.6-sol", "high"),
+}
+EXPECTED_COMPONENTS = {
+    "collector": {"version": "4.0.0"},
+    "praxis-dashboard": {"version": "0.1.0"},
+    "praxis-memory": {"version": "0.1.0"},
+    "routecraft-core": {"version_source": "../../.codex-plugin/plugin.json#/version"},
+    "telemetry-schema": {"version": "1.0.0"},
 }
 
 errors: list[str] = []
@@ -106,6 +118,28 @@ required_files = [
     LOCAL_PACKAGE / "web" / "app.js",
     LOCAL_PACKAGE / "web" / "styles.css",
     LOCAL_PACKAGE / "web" / "responsive.css",
+    PROTOCOL_PACKAGE / "__init__.py",
+    PROTOCOL_PACKAGE / "privacy.py",
+    PROTOCOL_PACKAGE / "telemetry.py",
+    CORE_PACKAGE / "__init__.py",
+    PRAXIS_MEMORY_PACKAGE / "__init__.py",
+    PRAXIS_DASHBOARD_PACKAGE / "__init__.py",
+    PRAXIS_DASHBOARD_PACKAGE / "projection.py",
+    PRAXIS_DASHBOARD_PACKAGE / "query.py",
+    PRAXIS_DASHBOARD_PACKAGE / "server.py",
+    PRAXIS_DASHBOARD_PACKAGE / "assets" / "index.html",
+    PRAXIS_DASHBOARD_PACKAGE / "assets" / "styles.css",
+    PRAXIS_DASHBOARD_PACKAGE / "assets" / "app.js",
+    *(COMPONENTS / component / "manifest.json" for component in EXPECTED_COMPONENTS),
+    PLUGIN / "scripts" / "routecraft-core.py",
+    PLUGIN / "scripts" / "routecraft-core.sh",
+    PLUGIN / "scripts" / "routecraft-core.ps1",
+    PLUGIN / "scripts" / "praxis-memory.py",
+    PLUGIN / "scripts" / "praxis-memory.sh",
+    PLUGIN / "scripts" / "praxis-memory.ps1",
+    PLUGIN / "scripts" / "praxis-dashboard.py",
+    PLUGIN / "scripts" / "praxis-dashboard.sh",
+    PLUGIN / "scripts" / "praxis-dashboard.ps1",
     PLUGIN / "scripts" / "routecraft.sh",
     PLUGIN / "scripts" / "routecraft.ps1",
     ROOT / "scripts" / "build_local_release.py",
@@ -117,6 +151,8 @@ required_files = [
     ROOT / "samples" / "graph-ir-v1-fast-path.json",
     ROOT / "samples" / "real-agent-benchmark-suite.json",
     ROOT / "samples" / "security-validation-fixtures.json",
+    ROOT / "samples" / "praxis-event-v1.json",
+    ROOT / "samples" / "host-capability-registry-v1.json",
     LOCAL_VERSION_FILE,
     ROOT / "release" / "README-JA.md",
     ROOT / "release" / "UNINSTALL-JA.md",
@@ -139,6 +175,7 @@ required_files = [
     ROOT / "docs" / "MEMORY_EVALUATION.ja.md",
     ROOT / "docs" / "ADR-0007-EVIDENCE-DRIVEN-DURABLE-GRAPH.ja.md",
     ROOT / "docs" / "ROUTECRAFT-0.7-ARCHITECTURE.ja.md",
+    ROOT / "docs" / "PRAXIS-ARCHITECTURE.ja.md",
     ROOT / "docs" / "product-spec-v1.md",
     ROOT / "docs" / "architecture-v1.md",
     ROOT / "docs" / "data-model-v1.md",
@@ -163,6 +200,12 @@ required_files = [
     ROOT / "tests" / "test_routecraft_graph_telemetry.py",
     ROOT / "tests" / "test_routecraft_real_benchmark.py",
     ROOT / "tests" / "test_routecraft_security_validation.py",
+    ROOT / "tests" / "test_routecraft_protocols.py",
+    ROOT / "tests" / "test_routecraft_core.py",
+    ROOT / "tests" / "test_praxis_memory.py",
+    ROOT / "tests" / "test_praxis_dashboard.py",
+    ROOT / "tests" / "test_praxis_dashboard_server.py",
+    ROOT / "tests" / "test_praxis_integration.py",
     ROOT / "README.md",
     ROOT / "README.ja.md",
     ROOT / "LICENSE",
@@ -228,6 +271,30 @@ keywords = set(manifest.get("keywords", [])) if isinstance(manifest.get("keyword
 for keyword in {"persistent-memory", "decision-retrieval", "cross-device", "github-source-of-truth", "memory-evaluation", "observability"}:
     if keyword not in keywords:
         fail(f"plugin.json missing keyword: {keyword}")
+
+for component, expected in EXPECTED_COMPONENTS.items():
+    component_path = COMPONENTS / component / "manifest.json"
+    if not component_path.is_file():
+        continue
+    component_manifest = load_json(component_path)
+    if component_manifest.get("schema_version") != "1":
+        fail(f"{component}: schema_version must be 1")
+    if component_manifest.get("component") != component:
+        fail(f"{component}: component id mismatch")
+    if not isinstance(component_manifest.get("display_name"), str) or not component_manifest["display_name"].strip():
+        fail(f"{component}: display_name is required")
+    interfaces = component_manifest.get("interfaces")
+    if not isinstance(interfaces, list) or not interfaces:
+        fail(f"{component}: interfaces must be a non-empty list")
+    for key, value in expected.items():
+        if component_manifest.get(key) != value:
+            fail(f"{component}: {key} must be {value}")
+    if component == "routecraft-core" and component_manifest.get("version_source") == expected["version_source"]:
+        source_path = (component_path.parent / "../.." / ".codex-plugin" / "plugin.json").resolve()
+        if source_path != manifest_path.resolve() or component_manifest.get("version_source", "").split("#", 1)[1] != "/version":
+            fail("routecraft-core: version_source must resolve to plugin.json#/version")
+        elif not isinstance(manifest.get("version"), str):
+            fail("routecraft-core: version source has no string version")
 
 plugins = market.get("plugins", []) if isinstance(market, dict) else []
 entry = next((item for item in plugins if item.get("name") == "codex-routecraft"), None)
@@ -328,7 +395,16 @@ python_files = [
     PLUGIN / "scripts" / "routecraft_endpoint_migration.py",
 ]
 python_files.extend(sorted(LOCAL_PACKAGE.glob("*.py")))
-python_files.extend([LOCAL_SCRIPT, ROOT / "scripts" / "build_local_release.py", ROOT / "scripts" / "evaluate_routecraft_local.py"])
+for package in (PROTOCOL_PACKAGE, CORE_PACKAGE, PRAXIS_MEMORY_PACKAGE, PRAXIS_DASHBOARD_PACKAGE):
+    python_files.extend(sorted(package.glob("*.py")))
+python_files.extend([
+    LOCAL_SCRIPT,
+    PLUGIN / "scripts" / "routecraft-core.py",
+    PLUGIN / "scripts" / "praxis-memory.py",
+    PLUGIN / "scripts" / "praxis-dashboard.py",
+    ROOT / "scripts" / "build_local_release.py",
+    ROOT / "scripts" / "evaluate_routecraft_local.py",
+])
 for path in python_files:
     if not path.is_file():
         continue

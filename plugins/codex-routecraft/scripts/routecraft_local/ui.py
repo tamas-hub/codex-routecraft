@@ -39,8 +39,21 @@ def _call(service: Any, names: tuple[str, ...], *args: Any, **kwargs: Any) -> An
     raise NotFoundError(f"機能はまだ利用できません: {names[0]}")
 
 
-def _api(service: Any, method: str, path: str, query: dict[str, list[str]], body: dict[str, Any]) -> Any:
+def _api(service: Any, method: str, path: str, query: dict[str, list[str]], body: dict[str, Any], praxis: Any = None) -> Any:
     parts = [p for p in path.split("/") if p]
+    if path.startswith("/api/praxis/") and method != "GET":
+        raise RouteCraftLocalError("Praxis API は読み取り専用です")
+    if path == "/api/praxis/v1/snapshot":
+        from praxis_dashboard.query import PraxisDashboardQuery
+        return (praxis or PraxisDashboardQuery()).snapshot()
+    if path == "/api/praxis/v1/events":
+        from praxis_dashboard.query import PraxisDashboardQuery
+        try: limit = int((query.get("limit") or ["100"])[-1])
+        except ValueError: raise RouteCraftLocalError("limit は整数で指定してください")
+        return (praxis or PraxisDashboardQuery()).events(limit=limit, cursor=(query.get("cursor") or [None])[-1], source=(query.get("source") or [None])[-1])
+    if path == "/api/praxis/v1/sources":
+        from praxis_dashboard.query import PraxisDashboardQuery
+        return (praxis or PraxisDashboardQuery()).sources()
     if path == "/api/dashboard":
         projects = _call(service, ("list_projects",))
         memories = _call(service, ("list_memories",), include_inactive=True, limit=1_000_000)
@@ -139,9 +152,18 @@ def _api(service: Any, method: str, path: str, query: dict[str, list[str]], body
     raise NotFoundError("APIエンドポイントが見つかりません")
 
 
-def create_server(service: Any, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+def create_server(service: Any, host: str = "127.0.0.1", port: int = 8765, *, praxis: Any = None) -> ThreadingHTTPServer:
     if host != "127.0.0.1":
         raise ValueError("RouteCraft UI は 127.0.0.1 にのみ bind できます")
+    if praxis is None:
+        candidate = Path(getattr(service, "data_dir", "")) / "praxis-memory.sqlite3"
+        if candidate.is_file():
+            try:
+                from praxis_dashboard.query import PraxisDashboardQuery
+                from praxis_dashboard.server import SQLiteEventSource
+                praxis = PraxisDashboardQuery(SQLiteEventSource(candidate))
+            except Exception:
+                praxis = None
     token = secrets.token_urlsafe(32)
     class Handler(BaseHTTPRequestHandler):
         server_version = "RouteCraftLocal/1.0"
@@ -180,7 +202,7 @@ def create_server(service: Any, host: str = "127.0.0.1", port: int = 8765) -> Th
                 self.send_response(200); self._headers(False); self.send_header("Content-Type", content_type); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw); return
             if not parsed.path.startswith("/api/"): return self._fail(404,"not_found","ページが見つかりません")
             if not self._host_ok(): return self._fail(403,"host","許可されていないHostです")
-            try: self._json(200,{"ok":True,"data":_api(service,"GET",parsed.path,parse_qs(parsed.query),{})})
+            try: self._json(200,{"ok":True,"data":_api(service,"GET",parsed.path,parse_qs(parsed.query),{},praxis)})
             except NotFoundError as exc: self._fail(404,"not_found",str(exc))
             except RouteCraftLocalError as exc: self._fail(400,"request",str(exc))
             except Exception: self._fail(500,"internal","処理に失敗しました")
@@ -192,7 +214,7 @@ def create_server(service: Any, host: str = "127.0.0.1", port: int = 8765) -> Th
             if not self._host_ok(): return self._fail(403,"host","許可されていないHostです")
             if not self._origin_ok(): return self._fail(403,"origin","許可されていないOriginです")
             if not secrets.compare_digest(self.headers.get("X-RouteCraft-CSRF", ""), token): return self._fail(403,"csrf","CSRF token が一致しません")
-            try: self._json(200,{"ok":True,"data":_api(service,method,urlparse(self.path).path,parse_qs(urlparse(self.path).query),self._read())})
+            try: self._json(200,{"ok":True,"data":_api(service,method,urlparse(self.path).path,parse_qs(urlparse(self.path).query),self._read(),praxis)})
             except ConfirmationRequiredError as exc: self._fail(409,"confirmation_required",str(exc))
             except NotFoundError as exc: self._fail(404,"not_found",str(exc))
             except (ValueError,RouteCraftLocalError) as exc: self._fail(400,"request",str(exc))

@@ -1,0 +1,10 @@
+{
+  "schema_version": "1",
+  "component": "collector",
+  "display_name": "RouteCraft Collector",
+  "version": "5.0.0",
+  "interfaces": [
+    {"name": "collector-payload", "schema_version": "5"},
+    {"name": "routecraft-telemetry", "schema_version": "1"}
+  ]
+}
